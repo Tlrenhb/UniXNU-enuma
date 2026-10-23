@@ -127,7 +127,14 @@ if [ -n "$DEVS" ] && [ "$FASTBOOT_ONLY" != "1" ]; then
   grab cmdline             "cat /proc/cmdline"
   grab partitions          "cat /proc/partitions"
   grab byname              "ls -l /dev/block/by-name/"
-  grab sgdisk              "sgdisk -p /dev/block/sda" --root --critical
+  grab userdata_link       "readlink -f /dev/block/by-name/userdata" --root --critical
+  UB=$(tr -d '\r\n' < "$RAW/userdata_link.txt" 2>/dev/null || true)
+  if [ -n "$UB" ]; then
+    UBB=${UB##*/}
+    # sysfs 回退：多数 Android 上没有 sgdisk；/sys/class/block/<part>/start|size 是 512 字节扇区
+    grab userdata_sysfs    "cat /sys/class/block/$UBB/start /sys/class/block/$UBB/size" --root --critical
+  fi
+  grab sgdisk              "command -v sgdisk >/dev/null 2>&1 && sgdisk -p /dev/block/sda || echo NO_SGDISK" --root
   grab userdata_blocksize  "blockdev --getss /dev/block/by-name/userdata" --root --critical
   grab userdata_size       "blockdev --getsize64 /dev/block/by-name/userdata" --root
   grab df_data             "df -h /data"
@@ -189,6 +196,17 @@ sg=rd('sgdisk'); m=re.search(r'^\s*\d+\s+(\d+)\s+(\d+)\s+.*?\buserdata\b\s*$',sg
 if m:
     s['userdata_first_lba']=hex(int(m.group(1))); s['userdata_last_lba']=hex(int(m.group(2)))
     s['userdata_first_lba_dec']=int(m.group(1)); s['userdata_last_lba_dec']=int(m.group(2))
+    s['userdata_lba_source']='sgdisk -p /dev/block/sda'
+else:
+    # sysfs fallback: start/size are 512-byte sectors; board.toml uses 4096-byte LBAs
+    nums=[int(x) for x in re.findall(r'^\d+$', rd('userdata_sysfs'), re.M)]
+    if len(nums) >= 2 and nums[0] % 8 == 0 and nums[1] % 8 == 0:
+        first_4k, sectors_4k = nums[0]//8, nums[1]//8
+        s['userdata_first_lba']=hex(first_4k); s['userdata_last_lba']=hex(first_4k+sectors_4k-1)
+        s['userdata_first_lba_dec']=first_4k; s['userdata_last_lba_dec']=first_4k+sectors_4k-1
+        s['userdata_lba_source']='sysfs /sys/class/block/<part>/{start,size} (512B sectors / 8)'
+    else:
+        s['userdata_lba_source']='NOT MEASURED (no sgdisk and no usable sysfs start/size)'+ (f' raw={nums!r}' if nums else '')
 bs=first(r'^(\d+)\s*$',rd('userdata_blocksize'),int)
 if bs:
     s['userdata_lba_bytes']=bs; s['userdata_lba_bytes_source']='measured (blockdev --getss)'
@@ -222,6 +240,11 @@ notes=[f"# enuma 上机采集报告","",f"输出目录：`{out}`","",
 (out/'NOTES.md').write_text('\n'.join(notes)+'\n',encoding='utf-8')
 print(f"summary.json: {json.dumps(s,ensure_ascii=False)[:300]}")
 PY
+if [ ! -f "$OUT/summary.json" ]; then
+  say "！！汇总步骤失败：summary.json 没有生成（请看上面的 Traceback）。"
+  record summary FAIL "python summary step failed"
+  exit 6
+fi
 
 say ""
 say "== 关键值（可直接抄进 board.toml，或直接用 enuma-fill.py 自动回填）=="

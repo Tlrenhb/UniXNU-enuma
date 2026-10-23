@@ -254,7 +254,7 @@ timeout = -1                         # umi 用 -1（停在菜单不自动选）�
 #   root: adb shell su -c 'cat /proc/iomem' ; adb shell cat /proc/meminfo
 #   sheng 用 0x80000000，pipa 用 0x980000000（多 bank）；umi 实测"三段 FDT DRAM bank 之和（含 4 GiB 以上）"
 #   = 0x2f9900000（12 GiB 机型）。enuma 有 6/8 GiB 两个版本，**必须实读**。
-dram_size = "0x0"                    # TODO(enuma)
+dram_size = "0x200000000"          # measured 2026-10-23: highest System RAM bank ends at 0x280000000, minus the 0x80000000 DRAM base (owner probe: memtotal 7793540 kB, 8 GiB variant)
 skip_setup_tool = "scripts/seed-data-skip-setup.py"   # 主仓库的脚本（--skip-setup 用）
 panic_screen = true                  # 把 panic 屏打进 payload 里的内核副本：无 UART 时唯一的内核输出
 # 与 sheng/pipa/umi 相同 IPSW 的两个原始 trust cache 哈希；现在可用公开脚本导出：
