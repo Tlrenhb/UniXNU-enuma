@@ -218,3 +218,5 @@ BSD-2-Clause-Patent（与 UniXNU / UniXNU-sheng 一致）。骨架由 task-7 生
 | `tools/evidence-hash.sh` | 证据包：把一次上机尝试的日志/照片与对应 boot image 的 SHA-256 绑定（官方 `guide/debugging.md` 的要求） |
 
 采集完并把 `[userdata] first/last_lba`、`[payload] dram_size` 填好后，删掉 board.toml 里那两行 `TODO(enuma)`，`check-enuma.py` 应变成 **0 TODO**。
+
+> **数值来源与验证状态**：见 [provenance.md](provenance.md)。同 SoC 的 pipa 端口**从未上机、也从未真正编译过**（官方原文 "Nothing has run on a pipa."，且其 defconfig 缺 `CONFIG_XNU_BUILD_ARCHIVES`），所以每一项都标了来源与验证等级。
