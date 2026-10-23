@@ -13,7 +13,7 @@
 | stock DT 根 compatible | `qcom,kona-mtp qcom,kona qcom,mtp` | **注意**：stock DT 不带 `xiaomi,enuma`（那是 dtbo/ABL 层的事）；我们 ADT 里的 `root-compatible = xiaomi,enuma\0qcom,sm8250\0` 是**自建的板身份**，与 pipa 的做法同构 |
 | userdata 块大小 | 4096 B | ✓ |
 | userdata 容量 | 242,455,916,544 B（59,193,339 × 4096） | 与 sysfs `size` 完全自洽 |
-| userdata LBA | 见下一次采集（首轮设备上没有 `sgdisk`，已加 sysfs 回退） | 填入 `[userdata] first_lba/last_lba` |
+| userdata LBA | `first_lba = 0x290000`、`last_lba = 0x3b037fa`（sysfs start 21495808 / size 473546712，512B 扇区 ÷8）；59,193,339 × 4096 = 242,455,916,544 B **与 blockdev 一致** | 已填入 `[userdata]`，`check-enuma.py` = **0 outstanding measurement** |
 | `fastboot getvar` | 未采集（设备当时在 Android 模式） | 需要时 `--fastboot-only` |
 
 ## 教训（已修进脚本）

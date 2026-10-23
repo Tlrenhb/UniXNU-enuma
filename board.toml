@@ -42,7 +42,6 @@ fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustC
 "044-76034-038.dmg.trustcache" = "9742f3d566369e6c48f63b3dc0740b06c243d13c6650e25bbf44616e13d6d097"
 
 # userdata 分区：**这是本文件里最主要的剩余未测量项**。
-# TODO(enuma): first_lba / last_lba 必须在本机 GPT 上读，不能照抄 sheng/pipa/umi。
 #   root:  adb shell su -c 'sgdisk -p /dev/block/sda'        # 找 userdata 行的 First/Last sector
 #   无 root: adb shell cat /proc/partitions                  # 512B 扇区，需要换算并与 df 交叉验证
 #   块大小: adb shell su -c 'blockdev --getss /dev/block/by-name/userdata'
@@ -50,9 +49,9 @@ fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustC
 #         与我们这台平板无关，只用来确认"必须实读"这一点）。
 #   未填之前保持 0x0：`unixnu build userdata --dry-run` 会以"镜像大于分区"报错，属于期望的响亮失败。
 [userdata]
-first_lba = 0x0                      # TODO(enuma): 实机 sgdisk -p
-last_lba = 0x0                       # TODO(enuma): 实机 sgdisk -p
-lba_bytes = 4096                     # TODO(enuma): 用 blockdev --getss 确认是 4096
+first_lba = 0x290000                 # measured 2026-10-23: sysfs start 21495808 (512B) / 8
+last_lba = 0x3b037fa                  # measured: sysfs size 473546712 (512B) / 8 -> 59193339 sectors; 59193339*4096 = 242455916544 B == blockdev --getsize64
+lba_bytes = 4096                     # measured 2026-10-23: blockdev --getss = 4096
 windows = [
   { name = "OS", component = "OS" },
   { name = "SystemOS", component = "Cryptex1,SystemOS" },
@@ -250,7 +249,7 @@ size_mib = 192
 loader = "firmware"
 title = "enuma first boot: source 4K XNU to the panic screen"
 timeout = -1                         # umi 用 -1（停在菜单不自动选）；首轮 bring-up 比自动启动更好用
-# TODO(enuma): 实测内存映射后填（见 make-enuma-adt.py 的 --dram-size）。
+# measured 2026-10-23: 最高 System RAM bank 末尾 0x280000000 − DRAM base 0x80000000 = 0x200000000（8 GiB 机型，MemTotal 7793540 kB）。
 #   root: adb shell su -c 'cat /proc/iomem' ; adb shell cat /proc/meminfo
 #   sheng 用 0x80000000，pipa 用 0x980000000（多 bank）；umi 实测"三段 FDT DRAM bank 之和（含 4 GiB 以上）"
 #   = 0x2f9900000（12 GiB 机型）。enuma 有 6/8 GiB 两个版本，**必须实读**。
