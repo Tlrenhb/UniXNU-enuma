@@ -1,0 +1,321 @@
+# enuma（小米平板 5 Pro 5G, SM8250-AC）的板级描述，由 unixnu 构建驱动读取。
+#
+# 状态（task-16，2026-10-23）：**pre-dump 完成态**。
+#   - 凡能从一手公开材料确定的数值，已直接填入并在注释里给出 `文件:行` 来源。
+#   - 只有真正必须上机测量的数值保留 `# TODO(enuma): <命令>`，且**不填任何猜测值**。
+#   - 已填来源分四级：`astide`=AstideLabs/android_kernel_xiaomi_sm8250 @4ae1f1e（见
+#     ../astide-notes.md）；`umi`=reAAAq/UniXNU-umi（小米 10，**同 SoC 真机跑通**的端口）；
+#     `pipa`=xVanTuring/UniXNU-pipa（小米平板 6，同 SoC，无实机准备态）；`sheng`=UniXNU-sheng（SM8550 样例）。
+#   - 交叉核对与不可照抄项见 `umi-cas-learnings.md`，分阶段 defconfig 见 `configs/`。
+
+[board]
+name = "enuma"
+soc = "SM8250-AC"                    # astide: kernel dts 全部落在 sm8250 家族（enuma-sm8250.dtsi）；
+                                     # ELISH/ENUMA 的 LineageOS 通用板 TARGET_BOARD_PLATFORM := kona
+description = "Xiaomi Pad 5 Pro 5G"
+kit = "enuma"                        # 本仓库的 package/ 会作为 kits/enuma 出现在构建树里
+
+# 目标 OS 镜像：与 sheng / pipa / umi 完全相同的那份未修改 iPad7,1 iPadOS 17.7.11 restore image。
+# 同一份 IPSW 意味着同样的 kernelcache 引脚、同样的 trust cache 哈希、同样的 OS 卷 UUID。
+# TODO(enuma): 若改为其它 iOS 版本，必须同时更新 version/build/device_class/chip_id/board_id、[ipsw.sha256]、
+#              [kernel.prelink].kernelcache_sha256、[kernel.prelink].roots 与 [payload].trust_cache_sha256。
+[ipsw]
+url = "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw"
+product = "iPad7,1"
+version = "17.7.11"
+build = "21H461"
+device_class = "j120ap"
+chip_id = 0x8011
+board_id = 12
+fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustCache"]   # BuildManifest 组件名
+
+# 六个成员哈希：前两个来自 sheng/pipa 的既有 pin，后四个由 umi 的 board.toml 提供 —— 三者用的是
+# **同一个 IPSW**，因此成员哈希一致（哈希是镜像属性，与宿主设备无关）。
+# 来源：reAAAq/UniXNU-umi/board.toml `[ipsw.sha256]`（proven SM8250 端口）。
+# 驱动在解出每个成员后逐一比对，缺项会被判为未 pin；补全后可覆盖 kernelcache/DeviceTree/两个 trust cache。
+[ipsw.sha256]
+"044-76040-038.dmg" = "3f99b859c9728379110b66657c7b15285bcb1925ad8b5726542e2cdcf8b1028d"
+"044-76034-038.dmg" = "b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f"
+"kernelcache.release.ipad7" = "13b97fa2c5ce97f04408dcc28c41fb6b0d60b9440065197879acf44b2572bf7b"
+"DeviceTree.j120ap.im4p" = "3f612f64819fbf6a8aacc03fabeda08ba897c4bf5385df995c59815c0c80c8f0"
+"044-76040-038.dmg.trustcache" = "4563bdbf6ed8f72237d45dbba3ccde432634338f95c10d79d5d4631678a97c7c"
+"044-76034-038.dmg.trustcache" = "9742f3d566369e6c48f63b3dc0740b06c243d13c6650e25bbf44616e13d6d097"
+
+# userdata 分区：**这是本文件里最主要的剩余未测量项**。
+# TODO(enuma): first_lba / last_lba 必须在本机 GPT 上读，不能照抄 sheng/pipa/umi。
+#   root:  adb shell su -c 'sgdisk -p /dev/block/sda'        # 找 userdata 行的 First/Last sector
+#   无 root: adb shell cat /proc/partitions                  # 512B 扇区，需要换算并与 df 交叉验证
+#   块大小: adb shell su -c 'blockdev --getss /dev/block/by-name/userdata'
+#   基准：sheng/pipa/umi 都是 4096 字节基准（umi 实测：first 0x2c0000 / last 0x3b51ffa，那是 256 GB 的 Mi 10，
+#         与我们这台平板无关，只用来确认"必须实读"这一点）。
+#   未填之前保持 0x0：`unixnu build userdata --dry-run` 会以"镜像大于分区"报错，属于期望的响亮失败。
+[userdata]
+first_lba = 0x0                      # TODO(enuma): 实机 sgdisk -p
+last_lba = 0x0                       # TODO(enuma): 实机 sgdisk -p
+lba_bytes = 4096                     # TODO(enuma): 用 blockdev --getss 确认是 4096
+windows = [
+  { name = "OS", component = "OS" },
+  { name = "SystemOS", component = "Cryptex1,SystemOS" },
+]
+
+[kernel]
+defconfig = "enuma_defconfig"        # 阶段 1；后续阶段见 configs/enuma_{ufs,display_touch,owner}_defconfig
+
+# 官方必填：静态库构建脚本，在链接内核前**按顺序**执行。
+# 缺一条且没有对应 `*_ARCHIVE` 路径时，内核步骤会以
+#   "no builder makes it, supply the archive" 失败
+# （本地 UniXNU 快照 scripts/unixnu/kernel.py:68；docs/zh/reference/troubleshooting.md:15；
+#  输出布局 docs/zh/reference/output-layout.md:83 会给每个条目写 `archive-NN-<name>.log`）。
+#
+# 本列表 = pipa（同 SoC、同一套最小 defconfig）的 9 条，逐条对应 enuma_defconfig 实际链接的归档：
+#   build-corecrypto-14.py / --namespace   → SOURCE_CORECRYPTO14
+#   build-arm-driver.py ArmDTPlatform      → ARM_DT_PLATFORM
+#   build-arm-driver.py ArmCpu             → ARMCPU
+#   build-arm-driver.py NativeAES          → NATIVE_AES
+#   build-native-aes-bindings.py           → NATIVE_AES 的绑定
+#   build-libpthread-kernel.py             → SOURCE_PTHREAD
+#   build-link-stubs.py                    → EXTRA_LD_ARCHIVES（被裁组件的 no-op 钩子）
+#   build-platform-power.py                → SHENG_PMGR（original-PMGR 桥，不访问硬件）
+#
+# ⚠ 每个 builder 究竟由哪个仓库提供（2026-10-23 逐仓 API 核实；"—" = 该仓没有这个文件名）：
+#
+#   | builder                           | UniXNU main | UniXNU-sheng | umi                                   | pipa | 我们从哪里取 |
+#   |-----------------------------------|-------------|--------------|---------------------------------------|------|--------------|
+#   | build-corecrypto-14.py            | ✅          | —            | —                                     | —    | main         |
+#   | build-corecrypto-14.py --namespace| ✅          | —            | —                                     | —    | main         |
+#   | build-arm-driver.py               | —           | ✅           | ✅（名字是 build-umi-arm-driver.py）  | ✅   | pipa（与列表条目同名） |
+#   | build-native-aes-bindings.py      | ✅          | —            | —                                     | —    | main         |
+#   | build-libpthread-kernel.py        | ✅          | —            | —                                     | —    | main         |
+#   | build-link-stubs.py               | —           | —            | —                                     | ✅   | **只有 pipa** |
+#   | build-platform-power.py           | —           | —（sheng 叫 build-sheng-platform-power.py）| —（umi 叫 build-umi-platform-power.py）| ✅ | **只有 pipa** |
+#
+#   要点：**9 条里没有任何单一仓库能全部提供**。main 提供 4 条；pipa 提供 3 条（其中两条别无分号）；
+#   sheng / umi 的对应物改了名字（build-sheng-platform-power.py / build-umi-arm-driver.py），不可直接引用。
+#
+# 按 pin 解析（官方 resolution order：docs/zh/porting/device-repository.md:23,273）—— 具体操作步骤：
+#   1. 先用 source-lock.json（照 umi 的格式：UniXNU / uefi-enuma / Mu-Silicium base / UniXNU-sheng 四个 SHA）
+#      与 unixnu.lock 把 checkout 钉死；**不要用最新 upstream main**（见下）。
+#   2. 建树：`./unixnu defconfig enuma_defconfig -D ../UniXNU-enuma`。设备仓库的同名模块以符号链接进入
+#      `out/enuma/tree/`，且**设备仓库覆盖基础仓库**（device-repository.md:23）；`unixnu status` 会标记
+#      本地模块与未固定的锁文件（:273）。
+#   3. 逐条解析顺序：`out/enuma/tree/scripts/<builder>`（设备仓库覆盖层）→ 基础 UniXNU `scripts/<builder>`
+#      → 本板用到的驱动/feeds 仓库 `scripts/<builder>`。
+#   4. 只存在于 pipa 的两条（build-link-stubs.py、build-platform-power.py）**必须 vendored**：从
+#      `xVanTuring/UniXNU-pipa/scripts/` 复制进本仓库 `scripts/`（保留出处与许可证），条目名不变即可被
+#      第 3 步的第一层解析到。不要指望上游 main 会补上它们。
+#   5. 验证：`python3 scripts/check-enuma.py --tree out/enuma/tree` 必须 0 error。它会同时检查"列表里每条
+#      都能解析"与"该有的 9 条一条不缺"（缺任一条报
+#      `Missing archive: <name> (no builder makes it, supply the archive)`）。
+#   6. 若将来换 pin：先 `git trees` 重列各仓 scripts/，按上表重算"从哪里取"，再更新本表与
+#      scripts/check-enuma.py 的 ARCHIVES_REQUIRED。
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "build-arm-driver.py ArmDTPlatform",
+  "build-arm-driver.py ArmCpu",
+  "build-arm-driver.py NativeAES",
+  "build-native-aes-bindings.py",
+  "build-libpthread-kernel.py",
+  "build-link-stubs.py",
+  "build-platform-power.py",
+]
+
+[kernel.prelink]
+tool = "kits/NativePrelink/emit_prelink.py"
+kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
+kernelcache_sha256 = "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7"
+slide = "-0x1000000"
+early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0"
+# 这份 roots 列表是"目标 IPSW 的 kernelcache 里要保留哪些原版组件"，与宿主 SoC 无关；与 sheng/pipa 相同。
+# 注意 umi 的最小基线只保留了两个 root（AMFI + sandbox），并把 prelinked 相关开关放到 profile 里 ——
+# 我们的路线是"阶段 1 就带完整 roots 列表"，与 sheng/pipa 一致，属有意分歧（见 umi-cas-learnings.md）。
+roots = [
+  "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
+  "com.apple.driver.AppleARMPlatform",
+  "com.apple.driver.AppleARMWatchdogTimer",
+  "com.apple.driver.AppleAudioClockLibs",
+  "com.apple.driver.AppleEffaceableStorage",
+  "com.apple.driver.AppleIISController",
+  "com.apple.driver.AppleM2ScalerCSCDriver",
+  "com.apple.driver.AppleMobileFileIntegrity",
+  "com.apple.driver.ApplePMGR",
+  "com.apple.driver.IODARTFamily",
+  "com.apple.filesystems.apfs",
+  "com.apple.iokit.CoreAnalyticsFamily",
+  "com.apple.iokit.IOAVFamily",
+  "com.apple.iokit.IOAudio2Family",
+  "com.apple.iokit.IOCECFamily",
+  "com.apple.iokit.IOCryptoAcceleratorFamily",
+  "com.apple.iokit.IOGPUFamily",
+  "com.apple.iokit.IOHDCPFamily",
+  "com.apple.iokit.IOMobileGraphicsFamily",
+  "com.apple.iokit.IOReportFamily",
+  "com.apple.iokit.IOSlowAdaptiveClockingFamily",
+  "com.apple.iokit.IOStorageFamily",
+  "com.apple.iokit.IOSurface",
+  "com.apple.kec.Libm",
+  "com.apple.kec.corecrypto",
+  "com.apple.kext.AppleMatch",
+  "com.apple.kext.CoreTrust",
+  "com.apple.security.AppleImage4",
+  "com.apple.security.sandbox",
+  "com.apple.iokit.IOHIDFamily",
+  "com.apple.iokit.IOHIDEventDriver",
+]
+
+# 固件 = Mu-Silicium 的 enuma 端口。**上游没有 enuma（也没有 elish）**：Mu-Silicium 的 86 个 Resources/Configs
+# 里该家族只有 alioth / kebab / pipa；Status.md 的 SM8250 章节 6 台设备也没有 enuma。
+# 因此 enumaPkg 必须新建 —— 做法：复制 uefi-pipa 的 pipaPkg 为 enumaPkg（同 SoC），再按实机校正。
+#
+# DXE 补丁清单（6 条 = Mu-Silicium 上游 5 条 + UniXNU 必需 1 条）：
+#   1. Resources/MuPatches/AsmMacroLib.patch          ← Mu-Silicium 上游固定集
+#   2. Resources/MuPatches/Auth-Service.patch         ← 同上（umesh 授权服务）
+#   3. Resources/MuPatches/Boot-Manager.patch         ← 同上
+#   4. Resources/MuPatches/Timer.patch                ← 同上
+#   5. Resources/MuPatches/Usb-Bus.patch              ← 同上
+#   6. Resources/MuPatches/Gic-Spurious.patch         ← UniXNU 侧必需（mask 无 handler 的 GIC 中断；
+#                                                        不修时 IPCC INTID 0x105 会死循环，sheng 实测）
+#   来源：Project-Silicium/Mu-Silicium Resources/MuPatches 目录列表（5 条，本次 API 核实）
+#         + 本仓库既有的 patches 字段 + shengPkg/PORTING.md 对 Gic-Spurious 的说明。
+#   umi 另外还加了三只为调试/宿主服务的补丁（Dxe-Trace.patch、Display-Services-Trace.patch、Mac-Bash3.patch）
+#   —— 它们是**可选**：Mac-Bash3 是 macOS 自带 bash3 的构建脚本兼容，Trace 两只是日志。enuma 首版不引入。
+#   check-enuma.py 会核对上游 5 条 + Gic-Spurious 是否都在 checkout 里。
+[firmware]
+config = "enuma"                     # TODO(enuma): 新建 Resources/Configs/enuma.toml（照 pipa.toml）
+dsc = "Platforms/Xiaomi/enumaPkg/enuma.dsc"
+fd = "Build/enumaPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
+preflight = ["scripts/check-enuma.py"]
+# pipa 需要 Mu-Silicium 的 Binaries 子模块（厂商二进制）。enuma 是否需要、需要哪些，在 P1 阶段确定。
+submodules = ["Binaries", "Common/Mu", "Common/Mu_OEM_Sample", "Silicium-ACPI", "Silicon/Silicium/OpensslPkg/Library/OpensslLib/openssl"]
+patches = ["Resources/MuPatches/Gic-Spurious.patch"]     # 由 UniXNU 构建实际应用的那一条（pipa 同样只列这一条）
+packages = [
+  "{uefi}",
+  "{uefi}/Platforms/Xiaomi",
+  "{tree}/package",
+  "{tree}/drivers/DarwinBoot",
+  "{edk2}",
+  "{uefi}/Common/Mu",
+  "{uefi}/Common/Mu_OEM_Sample",
+  "{uefi}/Silicon/Qualcomm",
+  "{uefi}/Silicon/Silicium",
+  "{uefi}/Silicium-ACPI",
+  "{uefi}/Silicium-ACPI/Platforms/Xiaomi",
+  "{uefi}/Silicium-ACPI/Silicon/Qualcomm",
+]
+
+[firmware.defines]
+ENABLE_SECUREBOOT = "1"              # sheng 用 1；umi 用 0（并配 DEVICE_MODEL="0"）。这是"固件签名策略"开关，
+                                     # 不是硬件事实：锁定用 1，实验性调试可用 0。若首轮 fastboot boot 卡在
+                                     # 镜像校验，按 umi 的先例降到 0 再试一次（见 umi-cas-learnings.md）。
+MEMORY_PROTECTION = "TRUE"
+SHIP_MODE = "FALSE"
+BUILDID_STRING = "enuma-research"
+# TODO(enuma): sheng 有 DEVICE_MODEL="sheng"，umi 有 DEVICE_MODEL="0"；pipa 的 board.toml 里没有这一项
+#              （说明它由平台包决定）。新建 enumaPkg 时确认 DSC 是否已经定义 DEVICE_MODEL，再决定这里要不要加。
+# DEVICE_MODEL = "enuma"
+
+# boot image 布局：**采用 umi 在 SM8250 实机跑通的那一组值**（与 pipa.toml 的 header_version=1 一致）。
+# 来源：reAAAq/UniXNU-umi/board.toml `[bootimg.image]`（header_version=1, pagesize=4096, base=0,
+#       kernel_offset=0x8000, tags_offset=0x1e00000）；pipa.toml 只给 header_version=1，两者不冲突。
+[bootimg.image]
+header_version = 1
+pagesize = 4096
+base = 0
+kernel_offset = 0x8000
+tags_offset = 0x1e00000
+
+# stock ABL 在设备树没有 splash 保留区时会关掉屏幕（sheng/pipa 的做法）。
+# 值已可从内核树确定：astide kona.dtsi:508-511
+#   cont_splash_memory: cont_splash_region@9c000000 { reg = <0x0 0x9c000000 0x0 0x2300000>; label = "cont_splash_region"; }
+#   → 基址 0x9c000000，大小 0x2300000（36.5 MB）
+# pipa 的 PORTING.md 记录了同一个 0x9c000000 基址（"Resources/DTBs/pipa.dtb carries
+# /reserved-memory/cont_splash_region at 0x9c000000, inside the 'Display Reserved' descriptor"），
+# 即这是 SM8250 这一代的通用 splash 窗口，不是某台机器的偶然值。
+# 同域区还有 disp_rdump_region@9c000000 (0x2400000) 与 dfps_data_region@9e300000 (0x100000)（kona.dtsi:513-521）。
+# 验证步骤（不阻塞构建，但上机前要做）：从本机 dtbo 里确认 ABL 用的是同一段
+#   root: adb shell su -c 'dd if=/dev/block/by-name/dtbo of=/data/local/tmp/dtbo.img'
+#         dtc -I dtb -O dts /data/local/tmp/dtbo.img | grep -A6 cont_splash_region
+[[bootimg.dtb_node]]
+path = "/reserved-memory/cont_splash_region"
+props = [
+  { name = "label", type = "s", value = "cont_splash_region" },
+  { name = "reg", type = "x", value = ["0x0", "0x9c000000", "0x0", "0x2300000"] },
+]
+
+# 启动镜像的 ramdisk：一个 FAT 卷，装 UniXNU 配置、内核、它的 ADT 以及可选的 trust cache 与 Data seed。
+# DarwinBoot 在固件卷里（loader = "firmware"）。
+[payload]
+volume = "ENUMAESP"                  # FAT label，≤11 字符
+size_mib = 192
+loader = "firmware"
+title = "enuma first boot: source 4K XNU to the panic screen"
+timeout = -1                         # umi 用 -1（停在菜单不自动选）；首轮 bring-up 比自动启动更好用
+# TODO(enuma): 实测内存映射后填（见 make-enuma-adt.py 的 --dram-size）。
+#   root: adb shell su -c 'cat /proc/iomem' ; adb shell cat /proc/meminfo
+#   sheng 用 0x80000000，pipa 用 0x980000000（多 bank）；umi 实测"三段 FDT DRAM bank 之和（含 4 GiB 以上）"
+#   = 0x2f9900000（12 GiB 机型）。enuma 有 6/8 GiB 两个版本，**必须实读**。
+dram_size = "0x0"                    # TODO(enuma)
+skip_setup_tool = "scripts/seed-data-skip-setup.py"   # 主仓库的脚本（--skip-setup 用）
+panic_screen = true                  # 把 panic 屏打进 payload 里的内核副本：无 UART 时唯一的内核输出
+# 与 sheng/pipa/umi 相同 IPSW 的两个原始 trust cache 哈希；现在可用公开脚本导出：
+#   UniXNU/scripts/build-original-system-trust.py + make-owner-trust-bundle.py
+trust_cache_sha256 = [
+  "7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7",
+  "8900d6a93d7a59ce1a872a5c081e559f4240a218f97e12d44d22dda46644d68f",
+]
+# 首版只保留与板子无关的通用参数 + sheng-pmgr=2（pipa 证实它不访问任何硬件，属于 original-PMGR 桥）。
+# sheng 的 sheng-smp / sheng-cpufreq / sheng-touch / sheng-gpu-* / sheng-disable-watchdogd 属于 sheng 组件，删掉。
+# armcpu-spi-ipi 是 SM8550 特性，删掉。
+# umi 的实测参数集是 ["-v", "keepsyms=1", "kt_fixed_zones=120"]；本机保留更啰嗦的调试组合（kt_fixed_zones=120
+# 与 umi 相同）。KS 相关：enuma 无 UART，屏幕是唯一输出通道，所以保留 -v 与 panic_screen。
+# TODO(enuma): 后续阶段按实际启用的组件逐项往上加（显示、HID、boot-progress、存储）。
+kernel_args = [
+  "-v",
+  "serial=3",
+  "debug=0x14e",
+  "kt_fixed_zones=120",
+  "armcpu-diagnostics=1",
+  "sheng-pmgr=2",
+  "-no_slto_panic",
+  "ml-timeout-lock-panic-scale=40",
+  # TODO(enuma): 屏蔽蜂窝/定位等服务（enuma 是 5G 机型；sheng 的名单是板级专属，需要重定）
+  # "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.iconservices.iconservicesagent",
+]
+
+[payload.adt]
+tool = "scripts/make-enuma-adt.py"
+# 已修正（task-18 ②）：原值抄 pipa 的 "207"，但 pipa **从未上机**（其自身 README/PORTING 写明
+# "not run on hardware"/"Prepared without the tablet"），而 umi 的一手注释写明这个值来自观测到的
+# qcom,msm-id：reAAAq/UniXNU-umi/board.toml `# Local IOPlatformUUID seed based on the observed
+# qcom,msm-id, not Apple ApChipID.` + `chip_id = "0x164"`。本机抓下的 enuma 设备树给出同一个数：
+# astide `kona-v2.1.dtsi:7` `qcom,msm-id = <356 0x20001>`（356 = 0x164；enuma 用 kona-v2.1 基座，
+# 与 out/astide 的 enuma-dts 记录 `qcom,msm-id = <0x164 0x20001` 一致），lineageos 源同值。
+# 按"有一手来源者胜出"，改为 0x164。
+# 语义说明（避免与 Apple 身份混淆）：**不是** Apple ApChipID —— 真正的 Apple chip id 在 `[ipsw]` 段
+# （`chip_id = 0x8011`，iPad7,1）；这里的 chip_id 是 ADT/IOPlatformUUID 的**软件身份种子**，
+# 由 SoC 的 msm-id 推导。两者不同名同义，不要互相替换。
+chip_id = "0x164"
+# 起点：pipa 用 4 GiB（0x100000000），sheng 用 0x130000000，umi 最小基线用 256 MiB（0x10000000）、
+# 最终 root profile 用 0x130000000。
+# TODO(enuma): 用实机空闲物理区间校正（256 MiB..8 GiB、2 MiB 对齐，脚本里有断言）。
+#   root: adb shell su -c 'cat /proc/iomem'
+owned_memory_size = "0x100000000"
+root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"   # 同一 IPSW 的 OS 卷 UUID（pipa/umi 同值）
+# umi 在 SM8250 上实测 8 核全上线（validation.json: smp_attempt 50、logical_cpus_online 8、
+# 每核 120s 计时器读数 8 个），MPIDR 亲和值就是这一串。enuma 是同一颗 SoC 家族（4×A55 + 3×A77 + 1 prime）。
+cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
+                                     # TODO(enuma): 多核前先用 getevent/DT 确认核心数与 MPIDR；
+                                     # 首轮若怀疑 SMP 问题，可退回 "0"（只声明启动核）。
+psci_method = "smc"                  # umi 用 smc；我们自己的 ADT 工具默认也是 smc（scripts/make-enuma-adt.py:142）
+packed_data_ramdisk = true
+ipad_identity = true
+unique_chip_id = "required"          # 平台种子不存仓库；本地生成，例如 qemu 参考的 .cache/platform-seed
+
+# 说明（官方 output-layout 要求）：`unixnu bootimg` 产物在 out/<board>/boot/ 下，每个 `[kernel] archives` 条目会
+# 生成 `archive-NN-<name>.log`；boot image 由 Resources/Scripts/mkbootimg.py 打包，可用
+#   `unixnu bootimg -D <repo> --uefi <checkout> --dtb <enuma.dtb>` 复现，
+# 再用 `python3 -m tools.mkbootimg unpack` 或 `unpack_bootimg` 反解自检 header_version/pagesize/base/offsets
+# 与本文件 [bootimg.image] 是否一致（docs/zh/reference/output-layout.md）。
+# TODO(enuma): pipa 用 header_version = 1、sheng 用 0；本文件采用 umi 在 SM8250 实机跑通的 1。
+#             若 stock ABL 拒收，退回 0 并把 [boot_image] 的 base/kernel_offset/tags_offset/pagesize 显式写出
+#             （sheng.toml 的写法：header_version=0, base=0, kernel_offset=0x8000, tags_offset=0x1e00000, pagesize=4096）。

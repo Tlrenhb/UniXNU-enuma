@@ -1,0 +1,13 @@
+# 本仓库的 package/ 会作为 kits/enuma 出现在构建树里：UniXNU 启动管理器的 kit 配置占位。
+# schema 见 https://unixnu.com/reference/boot-configuration 的 Kit.toml 一节。
+schema = 1
+
+[kit]
+name = "enuma"
+version = "0.0.0"
+description = "Xiaomi Pad 5 Pro 5G (enuma, SM8250-AC) board kit — 骨架，尚无驱动/覆盖层"
+
+# TODO(enuma): P1–P4 阶段按需加入（每一项都要有实机依据）：
+# [[driver]]                    # 板级 UEFI 驱动（.efi）
+# [[overlay]]                   # 设备树覆盖（.dtbo）
+# [[kext]]                      # 需要原始加载器注入时

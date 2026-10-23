@@ -1,0 +1,7 @@
+out/
+build/
+.cache/
+local.toml
+*.img
+*.dtb
+*.adt

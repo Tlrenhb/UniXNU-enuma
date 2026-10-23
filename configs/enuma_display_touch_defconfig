@@ -1,0 +1,56 @@
+# enuma 内核配置 —— **阶段 3：显示与触摸（屏幕常亮 + 能点菜单/桌面）**
+#
+# 进入条件：
+#   - 阶段 2 通过（UFS 根卷可挂载）；
+#   - 显示：选定"继承 ABL 帧缓冲"路线（pipa 的做法：`USE_CUSTOM_DISPLAY_DRIVER = 0` + SimpleFbDxe 在 ABL 留下的
+#     framebuffer 上发布 GOP），并把 splash 保留区写进 boot DTB —— 本仓库 board.toml 已按
+#     astide kona.dtsi:508-511 填好 `0x9c000000 + 0x2300000`；
+#   - 触摸：把 Novatek **NT36523** 接上。已知硬件事实（../astide-notes.md §1）：
+#       SPI `qupv3_se4_spi`、CS 0、spi-max-frequency 19.2 MHz、IRQ `tlmm 39`、
+#       `swrst-n8-addr = 0x03F0FE`、`spi-rd-fast-addr = 0x03F310`、**无 reset GPIO**（DTS 里被注释）、
+#       固件名 `novatek_nt36523_k81_fw01.bin`（缺失时驱动回退 `novatek_ts_fw_k81.bin`）、
+#       变体判定 = 面板 vendor info 字节 `lockdown[1]`（0x42→42_02_0a；0x35/0x08→35_02_0b）。
+# 期望验收：
+#   - 面板保持点亮（ABL 的 framebuffer 不被 vendor 驱动关掉），UniXNU 菜单可见、可按键选择；
+#   - 内核控制台/panic 屏在 framebuffer 上可读（阶段 1 已有）；
+#   - 触摸：XNU 侧出现输入设备节点，`getevent`/日志里出现物理触点坐标（参考 umi 的判据：
+#     "physical touch confirmed" **不等于** HID 挂载成功 —— umi validation.json 明确要求区分这两者）。
+#
+# 与阶段 2 的差异（增量）：
+#   + CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y      ← pipa 路线：不接管 MDP/DSI，只用 ABL 帧缓冲
+#   （可选）CONFIG_XNU_NATIVE_MOBILE_DISPLAY=y ← 只有在真的移植了 SM8250 DSI/DPU 初始化后才打开；
+#                                               sheng 的该归档带 SM8550 板级探针，直接开会挂错板子
+# 触摸开关：**名字必须核对，不要照抄 sheng/umi**。
+#   - 本地 Oct-20 的 UniXNU 快照里 `CONFIG_XNU_` 注册表（34 项）**没有**触摸项；
+#   - umi 的触摸走 phone profile（ST FTS / fts_521，native GPI DMA I²C + PM8150B GPIO5 rail），
+#     **不是** defconfig 开关，且 enuma 是 Novatek SPI，两者不可互抄；
+#   - 候选来源：UniXNU-sheng 的 `scripts/build-native-hid-input.py` 与驱动仓库 NativeNovatekTouch / NativeHidInput。
+#   → 进入阶段 3 时先在 pin 住的树上 `grep -rn "NATIVE_HID_INPUT\|NOVATEK" --include=Kconfig --include=*.py`，
+#     确认开关真名与归档构建器，再写进本文件（届时同步更新 board.toml 的 archives）。
+
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_AES=y
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y
+CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
+CONFIG_XNU_DT_PANIC_REGION=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+CONFIG_XNU_NATIVE_PAN=y
+CONFIG_XNU_SHENG_PMGR=y
+
+CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/link-stubs/libLinkStubs.a"
+CONFIG_XNU_ARMVIRT_PLATFORM=n
+
+CONFIG_XNU_NATIVE_UFS=y
+CONFIG_XNU_SMMU4K_PROBE=y
+
+# —— 阶段 3 新增 ——
+CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
+CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
+# TODO(enuma): 触摸开关（真名待核对，见文件头说明）：
+# CONFIG_XNU_NATIVE_HID_INPUT=y
+
+# 仍未打开（阶段 4）：OWNER_* / VERIFIED_ROOT_PROBE / NATIVE_RAM_BLOCK / SOURCE_MOCKFS / BOOT_PROGRESS。

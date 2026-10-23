@@ -1,0 +1,46 @@
+# enuma 内核配置 —— **阶段 1：进入内核（source 4K XNU 到 panic 屏）**
+#
+# 进入条件：无。这是所有后续阶段的基础，QEMU 参考同样先跑通这一级。
+# 期望验收（官方 bring-up 阶段 1–3，docs/zh/porting/bring-up.md）：
+#   - `unixnu bootimg` 出来的 boot.img 能被 stock ABL `fastboot boot` 起来（不复位、仍在 bootloader）；
+#   - framebuffer 有输出或串口有 UEFI 输出；UniXNU 菜单出现，日志以 `UNIXNU:` 开头；
+#   - DarwinBoot 打印虚拟/物理基址、参数地址、入口地址后退出 boot services；
+#   - 内核入口探针在屏幕上出现（无 UART，panic 屏是唯一内核输出通道）；此时**还没有 root 卷**。
+#
+# CONFIG_XNU_<NAME> 在构建时变成 XNU_<NAME>。本文件是**完整配置**（不是 fragment）。
+# 来源与对照：
+#   - 结构与取值 = xVanTuring/UniXNU-pipa/configs/pipa_defconfig（同 SoC、最小集、静态检查通过）；
+#   - 真机基线对照 = reAAAq/UniXNU-umi/configs/umi_defconfig（小米 10 / SM8250，已跑到 Hello/Setup/持久 Data）。
+#     差异与原因见仓库根 `umi-cas-learnings.md`。
+#
+# 明确留到后续阶段的开关（每一项都写清为什么，以及哪个阶段打开）：
+#   NATIVE_UFS         SM8550 寄存器；SM8250 是 UFS 3.1，需重写 GCC/PHY/ICE 常量        → 阶段 2
+#   NATIVE_MOBILE_DISPLAY / NATIVE_LEGACY_DISPLAY   归档带 sheng 板级探针（SM8550 DPU）  → 阶段 3
+#   触摸              开关名待在与 pin 对齐的驱动树里核对（见阶段 3 文件）              → 阶段 3
+#   OWNER_* / VERIFIED_ROOT_PROBE / BOOT_PROGRESS   需要 owner 签名的卷策略             → 阶段 4
+#   NATIVE_RAM_BLOCK / SOURCE_MOCKFS                还没有 Data seed 或 fixture root     → 阶段 4
+#   NATIVE_ADRENO      A740 套件；enuma 是 Adreno 650（umi 也全程 ADRENO=n）             → 阶段 5（GPU）
+# SHENG_PMGR 链接 original-PMGR 桥（scripts/build-platform-power.py，不访问硬件）；缺了它原版 AMFI 会以
+# "No PMGR" panic。pipa 用同一个 flag，说明它跨板通用（名字里的 sheng 只是历史）。
+
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_AES=y
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y
+CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
+CONFIG_XNU_DT_PANIC_REGION=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+CONFIG_XNU_NATIVE_PAN=y
+CONFIG_XNU_SHENG_PMGR=y
+
+CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+# 被裁掉组件的探针需要 no-op 钩子（scripts/build-link-stubs.py，通用）。
+CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/link-stubs/libLinkStubs.a"
+CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
+CONFIG_XNU_ARMVIRT_PLATFORM=n
+
+# 与本阶段配套的 board.toml 字段：`[kernel] archives` 的 9 条（缺一条会命中 "no builder makes it"）、
+# `[[bootimg.dtb_node]]` 的 splash 保留区（0x9c000000+0x2300000）、`[bootimg.image]` 的 header_version=1。
+# 未测量项（不影响阶段 1 构建，但影响上机）：[userdata] first/last_lba、[payload] dram_size。

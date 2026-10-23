@@ -1,0 +1,46 @@
+# enuma 内核配置 —— **阶段 2：UFS 根卷（识别并挂载 OS / SystemOS）**
+#
+# 进入条件：
+#   - 阶段 1 已在真机跑通（菜单 + DarwinBoot + 内核入口探针可见）；
+#   - NativeUfs 的 SM8250 移植已写出（**不是**直接打开 sheng 的开关）：
+#       控制器 ufshc@0x1d84000（reg 0x1d84000 0x3000 + ICE 0x1d90000 0x8000）、PHY 0x1d87000、
+#       IRQ GIC_SPI 265 (LEVEL_HIGH)、2 lane/方向、ref clk 19.2 MHz、core clk 37.5–300 MHz；
+#       PHY = QMP **v4**（`qcom,ufs-phy-qmp-v4`）；供电 rail：vdda-phy=pm8150_l5、vdda-pll=pm8150_l9、
+#       vcc=pm8150_l17、vccq=pm8150_l6、vccq2=pm8150_s4、vdd-hba=ufs_phy_gdsc。
+#       以上全部来源：../astide-notes.md §4（astide kona.dtsi:3031-3128 / kona-mtp.dtsi:65-95）。
+#   - SMMU 侧：SM8250 是 4 KiB 页表宿主，`kits/ArmSmmu4K` 是通用套件；先用探针模式确认，再决定是否常开。
+# 期望验收（官方 bring-up 阶段 3–4）：
+#   - UniXNU 日志报告块设备与负载卷可见；DarwinBoot 校验内核/ADT/trust cache 后退出 boot services；
+#   - 内核侧打印 UFS 控制器/PHY 初始化与 LUN 枚举；`-v` 日志里出现 APFS 卷挂载；
+#   - 失败时按 docs/reference/troubleshooting.md 走：先看 UFS 时钟/供电，再看 ICE（本代 ICE 是独立 node）。
+#
+# 与阶段 1 的差异（增量）：
+#   + CONFIG_XNU_NATIVE_UFS=y                 ← 由 sheng 的 SM8550 版本改写为 SM8250（UFS 3.1）寄存器序列
+#   + CONFIG_XNU_SMMU4K_PROBE=y               ← 只探测，不接管；umi 全程保持 =n，我们先用探针取证
+# 需要同步更新：board.toml 的 `[kernel] defconfig = "enuma_ufs_defconfig"`，并在 `[kernel] archives` 里
+# 加入 UFS 归档构建脚本（名字以 pin 住的 revision 为准；current main 已无 native-ufs 构建器，见
+# umi-cas-learnings.md 的"不要用最新 upstream main 替代 pin"）。
+
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_AES=y
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y
+CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
+CONFIG_XNU_DT_PANIC_REGION=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+CONFIG_XNU_NATIVE_PAN=y
+CONFIG_XNU_SHENG_PMGR=y
+
+CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/link-stubs/libLinkStubs.a"
+CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
+CONFIG_XNU_ARMVIRT_PLATFORM=n
+
+# —— 阶段 2 新增 ——
+CONFIG_XNU_NATIVE_UFS=y
+CONFIG_XNU_SMMU4K_PROBE=y
+
+# 仍未打开（阶段 3/4 再开）：NATIVE_LEGACY_DISPLAY / 触摸、OWNER_* / VERIFIED_ROOT_PROBE /
+# NATIVE_RAM_BLOCK / SOURCE_MOCKFS / BOOT_PROGRESS / NATIVE_ADRENO。

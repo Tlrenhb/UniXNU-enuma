@@ -1,0 +1,89 @@
+name: device checks
+
+# 设备仓库的离线自检：不编译内核，只跑检查脚本与设备树抓取，用来在每次改动后快速发现结构性问题。
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dtc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq device-tree-compiler
+
+      - name: board.toml parses
+        run: |
+          python3 - <<'PY'
+          import tomllib
+          board = tomllib.load(open('board.toml', 'rb'))
+          name = board.get('board', {}).get('name')
+          assert name == 'enuma', f'unexpected board name: {name}'
+          print('board:', name, '| soc:', board['board'].get('soc'))
+          print('kernel.archives entries:', len(board['kernel']['archives']))
+          PY
+
+      - name: Offline preflight (check-enuma.py)
+        run: python3 scripts/check-enuma.py
+
+      - name: Vendored builders are present
+        run: |
+          missing=0
+          for f in scripts/build-arm-driver.py scripts/build-link-stubs.py scripts/build-platform-power.py \
+                   package/LinkStubs.c package/ShengPlatformPower.cpp scripts/patch-xnu-entry-probe.py; do
+            if [ -f "$f" ]; then echo "present: $f"; else echo "MISSING: $f"; missing=1; fi
+          done
+          exit "$missing"
+
+      - name: Patch scripts are syntactically valid
+        run: |
+          bash -n scripts/build-enuma-uefi.sh
+          for f in scripts/*.py; do python3 -c "import ast,sys;ast.parse(open(sys.argv[1]).read())" "$f"; echo "py ok: $f"; done
+
+      - name: ADT generator refuses to invent values
+        run: |
+          if python3 scripts/make-enuma-adt.py >/dev/null 2>&1; then
+            echo "::error::make-enuma-adt.py succeeded without measurements; it must refuse"
+            exit 1
+          fi
+          echo "ok: refused without measurements (exit $?)"
+
+      - name: Fetch and compile the enuma device tree (astide)
+        run: python3 scripts/fetch-enuma-dts.py --fetch --source astide
+
+      - name: Device tree matches the recorded hash
+        run: |
+          python3 - <<'PY'
+          import hashlib, pathlib, sys
+          expected = 'f0a78df8c5916c99552d153f73eca39161722e20af71a7647428acc75e0d5d7a'
+          for candidate in (pathlib.Path('out/astide/enuma.dtb'), pathlib.Path('out/enuma.dtb')):
+              if candidate.exists():
+                  digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+                  print(candidate, digest)
+                  if digest != expected:
+                      sys.exit(f'::error::{candidate} differs from the recorded hash {expected}')
+                  break
+          else:
+              sys.exit('::error::no merged DTB found')
+          PY
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## enuma device checks"
+            echo
+            echo "board.toml + check-enuma.py + vendored builders + DTS compile/hash."
+            echo "The kernel itself builds on the macOS workflow (see UniXNU's macos.yml)."
+          } >> "$GITHUB_STEP_SUMMARY"

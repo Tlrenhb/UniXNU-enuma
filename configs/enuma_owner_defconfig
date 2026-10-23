@@ -1,0 +1,67 @@
+# enuma 内核配置 —— **阶段 4：owner 链（持久 Data、用户态继续走）**
+#
+# 进入条件：
+#   - 阶段 3 通过（屏幕常亮、菜单可点）；
+#   - 公开脚本已能生成 owner 材料（这条链路 2026-10-20 起已不是私有阻塞）：
+#       UniXNU/scripts/build-original-system-trust.py、make-owner-trust-bundle.py、
+#       prepare-owner-data-fixture.py、build-owner-os-policy.py；
+#     平台种子本地生成（`--unique-chip-id`），Data seed 可用公开 fixture 生成器；
+#   - 本机 GPT 的 userdata 边界已测量（board.toml `[userdata] first_lba/last_lba`，**唯一必须实读的存储数值**）。
+# 期望验收（官方 bring-up 阶段 5+；对照 umi 的实测记录 docs/validation.json）：
+#   - `VERIFIED_ROOT_PROBE` 通过：原版 AMFI/沙箱接受 owner 签名的卷策略；
+#   - Data 卷挂载成功且**重启后仍在**（umi 的 "persistent Data" 就是这个判据）；
+#   - launchd 起来、Setup Assistant 出现（umi: observations.setup_ui = "Hello / Setup Assistant confirmed"）；
+#   - BOOT_PROGRESS 打开后能看到启动进度输出。
+#
+# 与阶段 3 的差异（增量）：
+#   + CONFIG_XNU_VERIFIED_ROOT_PROBE=y  →  owner 卷策略的核心探针
+#   + CONFIG_XNU_OWNER_ROOT_AUDIT / ROOT_TRUST / CACHE_MOUNT / CACHE_STARTUP / BOOT_MANIFEST /
+#     DATA_MOUNT / UNION_SYSTEMOS     →  官方 owner 链（qemu_root_defconfig 的同一组）
+#   + CONFIG_XNU_SOURCE_MOCKFS=y / CONFIG_XNU_NATIVE_RAM_BLOCK=y  →  无真 root 时的 fixture 路径
+#   + CONFIG_XNU_BOOT_PROGRESS=y    →  依赖上面这条链
+#   + CONFIG_XNU_OWNER_DATA_VOLUME_UUID="<跳过 Setup 后的 Data 卷 UUID>"  ← **板级专属，不要照抄 sheng**
+#   + CONFIG_XNU_OWNER_CACHE_VOLUME_UUID（若走 cryptex cache 卷）
+# 仍未打开：NATIVE_ADRENO（A650 无可用套件，umi 也全程关闭、validation.json 的 gpu_acceleration=false）。
+
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_AES=y
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y
+CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
+CONFIG_XNU_DT_PANIC_REGION=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+CONFIG_XNU_NATIVE_PAN=y
+CONFIG_XNU_SHENG_PMGR=y
+
+CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/link-stubs/libLinkStubs.a"
+CONFIG_XNU_ARMVIRT_PLATFORM=n
+
+CONFIG_XNU_NATIVE_UFS=y
+CONFIG_XNU_SMMU4K_PROBE=y
+
+CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
+CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
+# TODO(enuma): 触摸开关（真名待核对，见 enuma_display_touch_defconfig 文件头）：
+# CONFIG_XNU_NATIVE_HID_INPUT=y
+
+# —— 阶段 4 新增 ——
+CONFIG_XNU_VERIFIED_ROOT_PROBE=y
+CONFIG_XNU_OWNER_ROOT_AUDIT=y
+CONFIG_XNU_OWNER_ROOT_TRUST=y
+CONFIG_XNU_OWNER_CACHE_MOUNT=y
+CONFIG_XNU_OWNER_CACHE_STARTUP=y
+CONFIG_XNU_OWNER_BOOT_MANIFEST=y
+CONFIG_XNU_OWNER_DATA_MOUNT=y
+CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
+CONFIG_XNU_BOOT_PROGRESS=y
+CONFIG_XNU_SOURCE_MOCKFS=y
+CONFIG_XNU_NATIVE_RAM_BLOCK=y
+# TODO(enuma): 跳过 Setup 之后的 Data 卷 UUID（板级专属，实机读）：
+# CONFIG_XNU_OWNER_DATA_VOLUME_UUID="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+
+# 阶段 5（GPU）不在本文件内：NATIVE_ADRENO / NATIVE_METAL 需要 A650 的支持证据，
+# 目前公开材料里没有 —— umi（同 SoC）的 validation.json 记录 gpu_acceleration = false。
+CONFIG_XNU_NATIVE_ADRENO=n
