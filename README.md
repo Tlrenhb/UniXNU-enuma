@@ -97,6 +97,7 @@
 | `scripts/make-enuma-adt.py` | 骨架但可运行 | SoC 常量已填（来源 `sm8250.dtsi`，经 pipa 验证）；板级值走**必填命令行参数**，不填不生成 |
 | `scripts/check-enuma.py` | **已扩展（含期望集合门）** | 校验：占位符、IPSW pin 数量、`[kernel] archives` **应有 9 条一条不缺**（`ARCHIVES_REQUIRED`；缺任一条报 `Missing archive: <name> (no builder makes it, supply the archive)`）+ `--tree` 逐条解析、四阶段累积性、preflight 路径、六补丁清单（`--uefi`）、bootimg header_version/pagesize、splash 区域、ADT 断言（psci/cpu_regs/owned_memory）。自测：删除 0/1/4 条 → exit 0/1/1 |
 | `scripts/build-enuma-uefi.sh` | 骨架 | 固件迭代回路（参照 pipa 的 `uefi-round.sh`）；P1 时应加 pin 守卫 |
+| `scripts/make-trust-bundle-from-members.py` | **可用（合成数据正反向测试通过）** | 从驱动已提取的两个 trustcache 成员组装 original-static-system bundle（等价于上游脚本但不需要 6.4 GiB 整包 IPSW），并用三段哈希自校验（`da88460e…`/`d121ba89…`/白名单 `7416ca4f…`）。云端 payload 构建靠它 |
 | `scripts/fetch-enuma-dts.py` | **可用（双来源，已实跑验证）** | `--source {astide,lineageos}`（默认 astide，pin `4ae1f1e4c89c`）→ 抓闭包 → 编译 kona-v2.1 基座 + enuma overlay → 合并 `out/<source>/enuma.dtb` |
 | `umi-cas-learnings.md` | **新增** | 同 SoC 真机端口 umi/cas 的可复用做法、不可照抄项、pin 告警的独立核实、cas 的 EFI-only 工具清单 |
 | `package/` `patches/` `kits/` `drivers/` | 占位 | 前期不需要 |
