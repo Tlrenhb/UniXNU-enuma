@@ -185,7 +185,15 @@ dsc = "Platforms/Xiaomi/enumaPkg/enuma.dsc"
 fd = "Build/enumaPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
 preflight = ["scripts/check-enuma.py"]
 # pipa 需要 Mu-Silicium 的 Binaries 子模块（厂商二进制）。enuma 是否需要、需要哪些，在 P1 阶段确定。
-submodules = ["Binaries", "Common/Mu", "Common/Mu_OEM_Sample", "Silicium-ACPI", "Silicon/Silicium/OpensslPkg/Library/OpensslLib/openssl"]
+submodules = [
+  # Upstream Mu-Silicium submodules. "Binaries" is deliberately NOT here: the enuma vendor drop
+  # (from the official fastboot ROM's xbl.elf) is placed at Binaries/enuma/ by the build workflow,
+  # so the driver must not try to git-submodule-init that path.
+  "Common/Mu",
+  "Common/Mu_OEM_Sample",
+  "Silicium-ACPI",
+  "Silicon/Silicium/OpensslPkg/Library/OpensslLib/openssl",
+]
 patches = ["Resources/MuPatches/Gic-Spurious.patch"]     # 由 UniXNU 构建实际应用的那一条（pipa 同样只列这一条）
 packages = [
   "{uefi}",
