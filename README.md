@@ -208,3 +208,13 @@ UNIXNU_UEFI=../uefi-enuma ./unixnu build firmware -D ../UniXNU-enuma
 
 BSD-2-Clause-Patent（与 UniXNU / UniXNU-sheng 一致）。骨架由 task-7 生成，task-16 升级为 pre-dump 完成态；
 数值来源见 `../astide-notes.md`、`../uefi-prereq.md` 与本仓库内注释。
+
+## 7. 上机工具（`tools/`）
+
+| 脚本 | 用途 |
+|---|---|
+| `tools/enuma-probe.sh` | 一次性采集 M1–M9（sgdisk / /proc/iomem / dtb / dtbo / getevent / wm size …），产出 `summary.json` + `NOTES.md`，并把关键值直接打到屏幕。**所有 adb/fastboot 调用都带超时**；没有 fastboot 设备时不会卡在 `getvar`。用法：`sudo bash tools/enuma-probe.sh`（或 `SKIP_FASTBOOT=1` / `--fastboot-only`） |
+| `tools/enuma-fill.py` | 把 `summary.json` 回填进 `board.toml` 的 TODO（只填真测到的值，其余保留 TODO）。用法：`python3 tools/enuma-fill.py --probe <probe 输出目录> --skeleton .` |
+| `tools/evidence-hash.sh` | 证据包：把一次上机尝试的日志/照片与对应 boot image 的 SHA-256 绑定（官方 `guide/debugging.md` 的要求） |
+
+采集完并把 `[userdata] first/last_lba`、`[payload] dram_size` 填好后，删掉 board.toml 里那两行 `TODO(enuma)`，`check-enuma.py` 应变成 **0 TODO**。
