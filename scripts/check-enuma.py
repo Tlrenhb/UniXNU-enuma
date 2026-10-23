@@ -30,6 +30,7 @@ Not implemented (needs the UEFI checkout or the tablet):
 """
 from pathlib import Path
 import argparse
+import os
 import re
 import struct
 import subprocess
@@ -37,7 +38,26 @@ import sys
 import tempfile
 import tomllib
 
-ROOT = Path(__file__).resolve().parents[1]
+_HERE = Path(__file__).resolve().parents[1]
+
+
+def _resolve_root() -> Path:
+    """Find the device repository.
+
+    The driver runs this script as a firmware preflight with cwd = <build tree>, where the script lives at
+    <tree>/scripts/check-enuma.py and the device repository is elsewhere. Prefer an explicit --device /
+    UNIXNU_DEVICE, then the script's own parent, then the tree's kits/<board> (package only, no board.toml)."""
+    candidates = []
+    if os.environ.get('UNIXNU_DEVICE'):
+        candidates.append(Path(os.environ['UNIXNU_DEVICE']))
+    candidates.append(_HERE)
+    for candidate in candidates:
+        if (candidate / 'board.toml').is_file():
+            return candidate
+    return _HERE
+
+
+ROOT = _resolve_root()
 CONFIGS = ROOT / 'configs'
 
 SM8550_ONLY = {
@@ -167,12 +187,20 @@ def validate_adt(blob):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--device', type=Path, default=None,
+                        help='device repository (default: $UNIXNU_DEVICE, else the script location)')
     parser.add_argument('--uefi', type=Path, default=None, help='Mu-Silicium (enumaPkg) checkout')
     parser.add_argument('--tree', type=Path, default=None,
                         help='build tree root: every [kernel] archives entry must resolve here')
     args = parser.parse_args()
     errors, todos, notes = [], [], []
 
+    global ROOT, CONFIGS
+    if args.device:
+        ROOT = args.device.resolve()
+        CONFIGS = ROOT / 'configs'
+    if not (ROOT / 'board.toml').is_file():
+        raise SystemExit(f"error: board.toml not found in {ROOT}; pass --device DIR or set UNIXNU_DEVICE")
     text = (ROOT / 'board.toml').read_text()
     board = tomllib.loads(text)
 
