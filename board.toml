@@ -242,15 +242,11 @@ tags_offset = 0x1e00000
 # 验证步骤（不阻塞构建，但上机前要做）：从本机 dtbo 里确认 ABL 用的是同一段
 #   root: adb shell su -c 'dd if=/dev/block/by-name/dtbo of=/data/local/tmp/dtbo.img'
 #         dtc -I dtb -O dts /data/local/tmp/dtbo.img | grep -A6 cont_splash_region
-[[bootimg.dtb_node]]
-path = "/reserved-memory/cont_splash_region"
-props = [
-  { name = "label", type = "s", value = "cont_splash_region" },
-  { name = "reg", type = "x", value = ["0x0", "0x9c000000", "0x0", "0x2300000"] },
-]
-
-# 启动镜像的 ramdisk：一个 FAT 卷，装 UniXNU 配置、内核、它的 ADT 以及可选的 trust cache 与 Data seed。
-# DarwinBoot 在固件卷里（loader = "firmware"）。
+# NOTE: no [[bootimg.dtb_node]] here on purpose.
+# The driver's patch_dtb() uses `fdtput -c` to CREATE the node, and enuma's device tree already
+# carries /reserved-memory/cont_splash_region@9c000000 with reg <0x0 0x9c000000 0x0 0x2300000>
+# (kona.dtsi:508-511 in the vendor tree, and the same base in the ROM dtbo). Adding it again fails
+# with "FDT_ERR_EXISTS". sheng needs this block only because its stock DTB has no splash region.
 [payload]
 volume = "ENUMAESP"                  # FAT label，≤11 字符
 size_mib = 192
