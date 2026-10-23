@@ -94,7 +94,7 @@
 | `configs/enuma_ufs_defconfig` | **阶段 2** | +`NATIVE_UFS`、+`SMMU4K_PROBE`，文件头写明 SM8250 的 UFS 全部常量来源 |
 | `configs/enuma_display_touch_defconfig` | **阶段 3** | +`NATIVE_LEGACY_DISPLAY`；触摸开关真名待核对（文件内有核对命令） |
 | `configs/enuma_owner_defconfig` | **阶段 4** | +owner 链 9 项 + `SOURCE_MOCKFS`/`NATIVE_RAM_BLOCK` + Data 卷 UUID 占位 |
-| `scripts/make-enuma-adt.py` | 骨架但可运行 | SoC 常量已填（来源 `sm8250.dtsi`，经 pipa 验证）；板级值走**必填命令行参数**，不填不生成 |
+| `scripts/make-enuma-adt.py` | **可用（task-19：pipa 结构 + enuma 常量）** | SoC 常量（DRAM base、arm-io 0x17000000/0x08000000、GIC 0x17a00000/0x17a60000、timebase 19200000、A55/A77 分裂点 0x400）与捐赠身份常量（iPad7,1/J120/2732/P3/hold-voldown-volup）**全部内置**并逐条写出处；**只对 `--dram-size` 拒绝**（0/缺失 → exit 2 + 测量命令）。其余五个旧必填项变成可选覆盖项 |
 | `scripts/check-enuma.py` | **已扩展（含期望集合门）** | 校验：占位符、IPSW pin 数量、`[kernel] archives` **应有 9 条一条不缺**（`ARCHIVES_REQUIRED`；缺任一条报 `Missing archive: <name> (no builder makes it, supply the archive)`）+ `--tree` 逐条解析、四阶段累积性、preflight 路径、六补丁清单（`--uefi`）、bootimg header_version/pagesize、splash 区域、ADT 断言（psci/cpu_regs/owned_memory）。自测：删除 0/1/4 条 → exit 0/1/1 |
 | `scripts/build-enuma-uefi.sh` | 骨架 | 固件迭代回路（参照 pipa 的 `uefi-round.sh`）；P1 时应加 pin 守卫 |
 | `scripts/make-trust-bundle-from-members.py` | **可用（合成数据正反向测试通过）** | 从驱动已提取的两个 trustcache 成员组装 original-static-system bundle（等价于上游脚本但不需要 6.4 GiB 整包 IPSW），并用三段哈希自校验（`da88460e…`/`d121ba89…`/白名单 `7416ca4f…`）。云端 payload 构建靠它 |
@@ -128,6 +128,30 @@
 4. 把只存在于 pipa 的两条（`build-link-stubs.py`、`build-platform-power.py`）**复制进本仓库 `scripts/`**
    （保留出处与许可），条目名不变即可被第 3 步第一层解析。
 5. 验证：`python3 scripts/check-enuma.py --tree out/enuma/tree` 必须 0 error（同时检查"能解析"与"9 条不缺"）。
+
+## 5c. ADT 生成器：什么内置、什么仍要测量（task-19）
+
+**背景**：云端 payload 跑通了 IPSW → trust bundle → kernel → prelink → panic 屏补丁，最后**卡在 ADT 生成** ——
+旧脚本要求 5 个 CLI 参数（`--armio-base/--root-compatible/--product-name/--artwork-device-subtype/--button-names`），
+而构建驱动 `UniXNU/scripts/unixnu/payload.py` 只传
+`--dram-size/--owned-memory-size/--root-match-volume-uuid/--chip-id/--cpu-regs/--psci-method/--unique-chip-id/--trust-cache/--ipad-identity`。
+现在**照 pipa 的做法把这些值内置**（仍可命令行覆盖），改成"驱动那组参数就能出 ADT"。
+
+| 类别 | 值 | 出处 |
+| --- | --- | --- |
+| SoC 常量（内置） | DRAM base `0x80000000` | astide `kona.dtsi:374`（首个保留区 @0x80000000） |
+| | arm-io `0x17000000` / size `0x08000000` | pipa `make-pipa-adt.py:28-29`；GIC 在该窗口内 |
+| | GICv3 `0x17a00000/0x10000` + `0x17a60000/0x100000`，stride `0x20000` | astide `kona.dtsi:643-650` |
+| | timebase `19200000` | astide `kona.dtsi:704`（`arch_timer clock-frequency`） |
+| | 核编号 `0x000..0x700`，A55/A77 分裂点 `0x400` | astide `kona.dtsi:59-244` + `cpu-map :267-302`（cluster0 = CPU0..3） |
+| 捐赠身份（内置） | `model iPad7,1`、`target-type J120`、`product-name "iPad Pro (12.9-inch) (2nd generation)"`、`artwork-device-subtype 2732`、scale 2、gamut P3、fallback `iPad6,7`、thin-bezel 1 | 未修改的 iPad7,1 镜像身份；pipa `:121-122,169-181` |
+| | `button-names hold/voldown/volup`、`home-button-type 2`、无 `menu` | 平板无 Home 键；同 sheng/pipa（可用 `getevent -pl` 复核，不阻塞） |
+| 仍需实测（**唯一拒绝项**） | `--dram-size`：0 或缺失 → **exit 2**，打印 `adb shell su -c 'cat /proc/iomem'` | enuma 有 6/8 GiB 两版；board.toml 里现为 `0x0`，**不猜** |
+| 驱动传入 | `--owned-memory-size/--root-match-volume-uuid/--chip-id(0x164)/--cpu-regs/--psci-method/--unique-chip-id/--trust-cache/--ipad-identity/--packed-data-ramdisk` | 见上 |
+
+`check-enuma.py` 现在会**真的跑一遍**：用驱动那组参数生成 ADT → 逐字节解析校验（根节点、8 个顶层节点、
+`/chosen` 的 dram-base/size/chip-id、`/cpus` 的 Affinity1 集合、`/arm-io` ranges、`/product/model`），
+再跑一次 `--dram-size 0x0` 断言它必须失败且打印测量命令；并静态核对内置常量与"五个选项不得 required"。
 
 ## 6. 开工顺序（最小路径）
 

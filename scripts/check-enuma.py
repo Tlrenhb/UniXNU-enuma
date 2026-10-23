@@ -31,7 +31,10 @@ Not implemented (needs the UEFI checkout or the tablet):
 from pathlib import Path
 import argparse
 import re
+import struct
+import subprocess
 import sys
+import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -104,6 +107,62 @@ def enabled_flags(path: Path) -> set:
     if not path.exists():
         return set()
     return {m.group(1) for m in re.finditer(r'^(CONFIG_XNU_[A-Z0-9_]+)=y\s*$', path.read_text(), re.M)}
+
+
+def parse_adt_node(blob, offset):
+    """Apple flat-DT node: u32 prop count, u32 child count, 32-byte names, 4-byte padded data."""
+    nprops, nchildren = struct.unpack_from('<II', blob, offset)
+    offset += 8
+    props = {}
+    for _ in range(nprops):
+        name, length = struct.unpack_from('<32sI', blob, offset)
+        offset += 36
+        props[name.split(b'\0')[0].decode()] = blob[offset:offset + length]
+        offset += length + (-length % 4)
+    children = []
+    for _ in range(nchildren):
+        child, offset = parse_adt_node(blob, offset)
+        children.append(child)
+    return {'props': props, 'children': children}, offset
+
+
+def validate_adt(blob):
+    """Structural check of a generated ADT (task-19). Returns a list of problems."""
+    problems = []
+    try:
+        root, used = parse_adt_node(blob, 0)
+    except Exception as exc:  # noqa: BLE001 - report anything the parser chokes on
+        return [f'the generated ADT does not parse: {exc}']
+    if used != len(blob):
+        problems.append(f'the generated ADT has {len(blob) - used} unparsed trailing byte(s)')
+    if root['props'].get('name', b'').rstrip(b'\0') != b'device-tree':
+        problems.append('the ADT root node is not "device-tree"')
+    kids = {k['props'].get('name', b'').rstrip(b'\0').decode(): k for k in root['children']}
+    for required in ('chosen', 'cpus', 'defaults', 'options', 'product', 'arm-io', 'psci', 'buttons'):
+        if required not in kids:
+            problems.append(f'the ADT has no /{required} node')
+    if problems:
+        return problems
+    chosen = kids['chosen']
+    ck = {k['props'].get('name', b'').rstrip(b'\0').decode(): k for k in chosen['children']}
+    for required in ('memory-map', 'manifest-properties'):
+        if required not in ck:
+            problems.append(f'the ADT has no /chosen/{required} node')
+    if struct.unpack('<Q', chosen['props']['dram-base'])[0] != 0x80000000:
+        problems.append('/chosen/dram-base is not 0x80000000 (SM8250 DRAM base)')
+    if struct.unpack('<Q', chosen['props']['dram-size'])[0] <= 0:
+        problems.append('/chosen/dram-size is zero')
+    if struct.unpack('<I', chosen['props']['chip-id'])[0] == 0:
+        problems.append('/chosen/chip-id is zero')
+    regs = [struct.unpack('<I', c['props']['reg'])[0] for c in kids['cpus']['children']]
+    if regs != sorted(set(regs)) or not regs or regs[0] != 0:
+        problems.append(f'/cpus regs are not the Affinity1 set starting at 0: {[hex(r) for r in regs]}')
+    armio = struct.unpack('<QQQ', kids['arm-io']['props']['ranges'])
+    if armio[1] != 0x17000000 or armio[2] != 0x08000000:
+        problems.append(f'/arm-io ranges = {[hex(v) for v in armio]}; expected 0x0/0x17000000/0x8000000')
+    if kids['product']['props'].get('model', b'').rstrip(b'\0') != b'xiaomi,enuma':
+        problems.append('/product/model is not "xiaomi,enuma"')
+    return problems
 
 
 def main():
@@ -289,8 +348,8 @@ def main():
         else:
             if not regs or regs[0] != 0 or len(set(regs)) != len(regs) or len(regs) > 8:
                 errors.append(f'[payload.adt] cpu_regs = {cpu_regs!r}: must start at 0, be unique and <= 8 entries')
-            elif any(r < 0 or r > 0xFFFF or r & 0xFF for r in regs):
-                errors.append(f'[payload.adt] cpu_regs = {cpu_regs!r}: each value must be 0..0xffff and 0x100-aligned')
+            elif any(r < 0 or r > 0x700 or r & 0xFF for r in regs):
+                errors.append(f'[payload.adt] cpu_regs = {cpu_regs!r}: each value must be 0x000..0x700 (SM8250 has 8 cores) and 0x100-aligned')
     owned = adt.get('owned_memory_size')
     if owned is not None:
         value = int(str(owned), 0)
@@ -298,6 +357,60 @@ def main():
             errors.append(f'[payload.adt] owned_memory_size = {owned} outside 256 MiB..8 GiB or not 2 MiB aligned')
     if not adt.get('unique_chip_id'):
         errors.append('[payload.adt] unique_chip_id is unset; the platform seed is per-build and never committed')
+
+    # 8. the ADT generator itself (task-19) --------------------------------------
+    # The cloud payload run died here: the five board-level options were REQUIRED CLI
+    # arguments that UniXNU's payload.py never passes. They are built-in constants now
+    # (still overridable); the only refusal left is --dram-size, which needs the tablet.
+    adt_tool = ROOT / 'scripts' / 'make-enuma-adt.py'
+    if not adt_tool.exists():
+        errors.append('scripts/make-enuma-adt.py is missing')
+    else:
+        adt_text = adt_tool.read_text()
+        builtins = [
+            ("b'xiaomi,enuma\\0qcom,sm8250\\0'", 'enuma root compatible'),
+            ("DONOR_TARGET_TYPE = b'J120\\0'", 'iPad7,1 donor target-type'),
+            ('DONOR_ARTWORK_SUBTYPE = 2732', 'iPad7,1 artwork index'),
+            ("DONOR_PRODUCT_NAME = b'iPad Pro (12.9-inch) (2nd generation)\\0'", 'donor product name'),
+            ("BUTTON_NAMES = b'hold\\0voldown\\0volup\\0'", 'tablet button set (no Home button)'),
+            ('ARMIO_BASE = 0x17000000', 'APSS window base (pipa:28)'),
+            ('GIC_DIST = 0x17A00000', 'GICv3 distributor (astide kona.dtsi:643-650)'),
+            ('TIMEBASE = 19200000', 'arch timer frequency (astide kona.dtsi:704)'),
+            ('LITTLE_CORES = 4', 'A55/A77 cluster split (astide kona.dtsi:267-302)'),
+        ]
+        for marker, why in builtins:
+            if marker not in adt_text:
+                errors.append(f'make-enuma-adt.py lost the built-in constant {marker!r} ({why})')
+        for option in ('--armio-base', '--root-compatible', '--product-name',
+                       '--artwork-device-subtype', '--button-names'):
+            if re.search(rf"add_argument\('{re.escape(option)}'[^)]*required=True", adt_text):
+                errors.append(f'make-enuma-adt.py requires {option}; the build driver never passes it '
+                              '(that is exactly what broke the cloud payload run)')
+        driver_args = ['--dram-size', '0x200000000', '--owned-memory-size', '0x100000000',
+                       '--root-match-volume-uuid', '04769D26-2CA0-4825-B443-E2E5F88300F2',
+                       '--chip-id', '0x164',
+                       '--cpu-regs', '0,0x100,0x200,0x300,0x400,0x500,0x600,0x700',
+                       '--psci-method', 'smc', '--unique-chip-id', '0x123456789abcdef0',
+                       '--trust-cache', '--ipad-identity']
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / 'enuma.adt'
+            run = subprocess.run([sys.executable, str(adt_tool), *driver_args, '--output', str(out)],
+                                 capture_output=True, text=True)
+            if run.returncode != 0 or not out.exists():
+                errors.append(f"the driver's argument set fails: rc={run.returncode} "
+                              f"{(run.stderr or run.stdout).strip()[:200]}")
+            else:
+                problems = validate_adt(out.read_bytes())
+                errors.extend(problems)
+                if not problems:
+                    notes.append(f"ADT smoke test passed on the driver's argument set "
+                                 f"({out.stat().st_size} bytes, structure verified)")
+        refused = subprocess.run([sys.executable, str(adt_tool), '--dram-size', '0x0',
+                                  '--output', '/dev/null'], capture_output=True, text=True)
+        if refused.returncode == 0:
+            errors.append('make-enuma-adt.py accepted --dram-size 0x0; it must refuse (measure it first)')
+        elif 'proc/iomem' not in refused.stderr:
+            errors.append('the --dram-size refusal does not print the on-device measurement command')
 
     print(f'board.toml: {len(todos)} outstanding measurement(s), {len(errors)} error(s)')
     for line in todos:
