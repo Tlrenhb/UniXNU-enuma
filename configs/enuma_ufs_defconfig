@@ -44,3 +44,10 @@ CONFIG_XNU_SMMU4K_PROBE=y
 
 # 仍未打开（阶段 3/4 再开）：NATIVE_LEGACY_DISPLAY / 触摸、OWNER_* / VERIFIED_ROOT_PROBE /
 # NATIVE_RAM_BLOCK / SOURCE_MOCKFS / BOOT_PROGRESS / NATIVE_ADRENO。
+
+# 归档构建器必须显式打开：kernel.py 的 build_archives() 在没有 XNU_BUILD_ARCHIVES 时直接 return，
+# 于是 [kernel] archives 里的 9 条构建器根本不会跑 —— 表现为内核链接期缺 _sheng_pmgr_run /
+# _native_legacy_display_probe 这类 no-op 探针符号（2026-10-23 由 GitHub Actions 实测定位）。
+# pipa 的 defconfig 缺这一行（它从未真正构建过）；umi 则选择了另一条路（CRYPTO_BOOTSTRAP=source、
+# SHENG_PMGR=n、无归档）。我们保留 pipa/sheng 的功能集，所以必须打开这一行。
+CONFIG_XNU_BUILD_ARCHIVES=y
