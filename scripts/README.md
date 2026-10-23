@@ -22,3 +22,8 @@ python3 scripts/make-enuma-adt.py \
 ```
 
 （上面的数值都是**占位示例**，不是测量结果——实机命令见 `../porting-plan.md` §4。）
+
+## make-trust-bundle-from-members.py
+
+从驱动已提取的 trustcache 成员组装 original-static-system bundle（上游脚本要完整 6.37 GiB IPSW）。
+对每个成员枚举候选（裸字节 + IM4P 各字段）按哈希匹配，失败时打印候选哈希表；最后用 board 白名单校验 bundle。

@@ -82,39 +82,38 @@ def main() -> int:
     if not members:
         print(f"error: no *.trustcache in {args.ipsw_dir}", file=sys.stderr)
         return 2
-    static = next((p for p in members if args.static_name and p.name == args.static_name), None)
-    cryptex = next((p for p in members if args.cryptex_name and p.name == args.cryptex_name), None)
-    if static is None or cryptex is None:
-        # Default mapping: the driver extracts exactly two members; try both assignments and keep the one whose
-        # hashes line up with the upstream constants.
-        for a in members:
-            for b in members:
-                if a == b:
-                    continue
-                blob_a, blob_b = a.read_bytes(), b.read_bytes()
-                if module_ok(blob_a, STATIC_SHA256):
-                    try:
-                        if module_ok(unwrap_im4p(blob_b), SYSTEM_SHA256):
-                            static, cryptex = a, b
-                            break
-                    except (ValueError, SystemExit):
-                        continue
-            if static and cryptex:
-                break
-    if static is None or cryptex is None:
-        report = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in members}
-        print("error: could not identify the static/system members by hash", file=sys.stderr)
-        print(json.dumps(report, indent=2), file=sys.stderr)
-        print(f"expected static {STATIC_SHA256}\nexpected system {SYSTEM_SHA256}", file=sys.stderr)
-        return 3
+    # The driver extracts the raw zip members, which may be the plain module or an IM4P container whose
+    # fields wrap it. Enumerate every candidate (raw bytes plus each DER field) and match by hash, so an
+    # unexpected container shows up as a readable table instead of a silent failure.
+    def candidates(path: Path):
+        out = [("raw", path.read_bytes())]
+        try:
+            blob = out[0][1]
+            tag, sequence, end = der(blob, 0)
+            if tag == 0x30 and end == len(blob):
+                cursor = 0
+                index = 0
+                while cursor < len(sequence):
+                    kind, value, cursor = der(sequence, cursor)
+                    out.append((f"field[{index}]", value))
+                    index += 1
+        except ValueError:
+            pass
+        return out
 
-    static_blob = static.read_bytes()
-    system_blob = unwrap_im4p(cryptex.read_bytes())
-    if not module_ok(static_blob, STATIC_SHA256):
-        print(f"error: {static.name} is not the static module (sha256 {hashlib.sha256(static_blob).hexdigest()})", file=sys.stderr)
-        return 3
-    if not module_ok(system_blob, SYSTEM_SHA256):
-        print(f"error: unwrapped system module has sha256 {hashlib.sha256(system_blob).hexdigest()}, expected {SYSTEM_SHA256}", file=sys.stderr)
+    table, static_blob, system_blob = {}, None, None
+    for member in members:
+        for label, blob in candidates(member):
+            digest = hashlib.sha256(blob).hexdigest()
+            table[f"{member.name}:{label}"] = digest
+            if module_ok(blob, STATIC_SHA256):
+                static_blob = blob
+            if module_ok(blob, SYSTEM_SHA256):
+                system_blob = blob
+    if static_blob is None or system_blob is None:
+        print("error: could not identify the static/system modules by hash", file=sys.stderr)
+        print(json.dumps(table, indent=2), file=sys.stderr)
+        print(f"expected static {STATIC_SHA256}\nexpected system {SYSTEM_SHA256}", file=sys.stderr)
         return 3
 
     bundle = struct.pack("<3I", 2, 12, 12 + len(static_blob)) + static_blob + system_blob
@@ -122,8 +121,9 @@ def main() -> int:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_bytes(bundle)
     report = {
-        "static_member": static.name, "static_sha256": hashlib.sha256(static_blob).hexdigest(),
-        "cryptex_member": cryptex.name, "system_sha256": hashlib.sha256(system_blob).hexdigest(),
+        "static_sha256": hashlib.sha256(static_blob).hexdigest(),
+        "system_sha256": hashlib.sha256(system_blob).hexdigest(),
+        "candidates": table,
         "bundle": str(args.out), "bundle_sha256": digest, "bundle_bytes": len(bundle),
         "matches_board_whitelist": digest == BUNDLE_SHA256,
     }
