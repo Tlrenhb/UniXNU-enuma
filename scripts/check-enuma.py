@@ -390,6 +390,46 @@ def main():
     # The cloud payload run died here: the five board-level options were REQUIRED CLI
     # arguments that UniXNU's payload.py never passes. They are built-in constants now
     # (still overridable); the only refusal left is --dram-size, which needs the tablet.
+    # --- duplicate INF guard -------------------------------------------------------------------
+    # GenFv only fails in the cloud ("the Nth file and Mth file have the same file GUID"), so catch it
+    # offline: every INF may appear exactly once across the FDF body, Include/DXE.inc and the vendor
+    # fragments QcomPkg/Extra.fdf.inc pulls in (their contents are fixed upstream, hence the list).
+    uefi_root = args.uefi
+    if uefi_root:
+        pkg = uefi_root / 'Platforms' / 'Xiaomi' / 'enumaPkg'
+
+        def _infs(path):
+            found = {}
+            if not path.is_file():
+                return found
+            for line in path.read_text(encoding='utf-8', errors='ignore').splitlines():
+                s = line.strip()
+                if s.startswith('#') or not s.startswith('INF '):
+                    continue
+                name = re.sub(r'^INF\s+(RuleOverride\s*=\s*\S+\s+)?', '', s).strip()
+                found.setdefault(name, path.name)
+            return found
+
+        seen = {}
+        for path in (pkg / 'enuma.fdf', pkg / 'Include' / 'DXE.inc'):
+            for name, where in _infs(path).items():
+                if name in seen:
+                    errors.append(f'{name} is listed in both {seen[name]} and {where}: GenFv will fail with a duplicate file GUID')
+                else:
+                    seen[name] = where
+        extra = {
+            'MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf',
+            'MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf',
+            'MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf',
+            'PcBdsPkg/MsBootPolicy/MsBootPolicy.inf',
+            'SiliciumPkg/Applications/UFPLoader/UFPLoader.inf',
+            'SiliciumPkg/Applications/UFP/ufpdevicefw.inf',
+            'QcomPkg/Applications/MassStorage/MassStorage.inf',
+        }
+        for name in sorted(extra & set(seen)):
+            errors.append(f'{name} is listed in {seen[name]} but SiliciumPkg/Extra.fdf.inc already provides it')
+        notes.append(f'INF uniqueness: {len(seen)} statements across enuma.fdf + DXE.inc, no duplicates')
+
     adt_tool = ROOT / 'scripts' / 'make-enuma-adt.py'
     if not adt_tool.exists():
         errors.append('scripts/make-enuma-adt.py is missing')
