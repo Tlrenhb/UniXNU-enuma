@@ -250,6 +250,12 @@ def main():
                   # pipa writes the same arm,cortex-a55/a77 strings (make-pipa-adt.py:115);
                   # the stock DT itself says "qcom,kryo" (kona.dtsi:243).
                   ('compatible', b'arm,cortex-a55\0' if reg >> 8 < LITTLE_CORES else b'arm,cortex-a77\0'),
+                  # XNU reads the cluster type as an integer character: 'E' (efficiency) or 'P'
+                  # (performance). UniXNU added the same property upstream (commit 71ccc68c,
+                  # devicetree.py) for DTS nodes that declare unixnu,cluster-type. The split matches
+                  # this SoC's own DT: CPU0..CPU3 carry capacity-dmips-mhz = 1024, CPU4..CPU7 >= 1894
+                  # (astide kona.dtsi:59-244), i.e. the low Affinity1 range is the efficiency cluster.
+                  ('cluster-type', struct.pack('<I', ord('E') if reg >> 8 < LITTLE_CORES else ord('P'))),
                   ('timebase-frequency', struct.pack('<I', TIMEBASE))])
             for index, reg in enumerate(cpu_regs)]
 
