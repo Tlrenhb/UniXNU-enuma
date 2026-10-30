@@ -1,10 +1,78 @@
-# UniXNU-enuma（pre-dump 完成态）
+# UniXNU-enuma
 
-> **当前状态：pre-dump 完成态（task-16，2026-10-23）。** 目录结构与 `UniXNU-sheng` / `UniXNU-pipa` 同构；
-> **凡能从一手公开材料确定的数值都已填入并在注释里给出 `文件:行` 来源**，只剩两项真正必须上机测量的数值是
-> `TODO(enuma)`：`[userdata] first_lba/last_lba` 与 `[payload] dram_size`。
-> `python3 scripts/check-enuma.py` 现在给出 **0 error / 2 TODO**（退出码 0）。
-> 这个仓库仍**不能直接构建出可烧写产物**——它缺的是 UEFI 侧（`enumaPkg`）与 pin 住的构建树，不是数值。
+> **当前状态（2026-10-31）：UniXNU 的菜单已经在 enuma 实机上跑起来了。**
+> 这是该设备第一次出现 UniXNU 界面：wordmark、4 个条目、选中高亮、倒计时、状态行全部正常。
+> 全过程只用 `fastboot boot` 热启动，**不写任何分区**。
+>
+> **还差三件事才算“能开机”**（见 §0.3）：`Connect ConIn Failed`（没有输入设备）、
+> `no boot entry found`（没有 payload，含内核与 Apple 卷）、
+> `drivers 0 loaded / 0 failed` `kits 0` `acpi 0`（UniXNU 侧驱动 / kext / ACPI 注入全为 0）。
+>
+> 构建走 GitHub Actions（产物在私有仓库 `Tlrenhb/enuma-build`），一轮约 3～4 分钟，
+> 产物是 `boot.img`（~1.9 MB）与 `SILICIUM_UEFI.fd`（3 MiB）。
+>
+> 2026-10-23 的“pre-dump 完成态”描述已过时，但 §1 起的目录结构、数值出处与 umi 对照**仍然有效**。
+
+---
+
+## 0. 2026-10-30 实机结果
+
+### 0.1 屏幕上现在能看到什么
+
+```
+[Bds] Connect ConIn Failed - Not Found!!!
+UniXNU                                  （wordmark）
+UNIXNU: menu: shown 4 entries, default 0 "exit", timeout 10000 ms, input no, rotate 2000
+1  Return to firmware   action
+2  Restart              action
+3  Power off            action
+Booting Return to firmware in N s
+No input device: the default entry boots when the timer ends
+no boot entry found
+drivers 0 loaded / 0 failed   kits 0
+acpi 0
+```
+
+启动链：Android ABL → BootShim → Mu-Silicium UEFI → UniXNU boot manager → 菜单。
+
+### 0.2 让菜单出现的那条根因（花了整整一天）
+
+`FrameBufferSerialPortLib::SerialPortWrite()` 的第一句是 `RamLogWrite (Buffer, NumberOfBytes)`，
+而 `RamoopsLogLib` 把固件日志写到 `RAMOOPS_CONSOLE_BASE = 0xB0000000`。
+我们自己的 MMU 表最后一行是 `base=0xA0000000 len=0x10000000` —— **正好结束在 `0xB0000000`**，
+ramoops 基址落在映射之外。MMU 一开，开机后第一次写控制台就 data abort，于是永远停在 `MU:09 enabling mmu`。
+
+证据链（每一环都有实机照片）：
+
+1. 早期色带把停止点夹在 `FfsGetFileInfo` 之后、`GetHobList` 之前；
+2. 在 `SerialPortWrite` 入口与“显存区解析完”之间各放一条检查点，只有入口那条点亮 —— 而这一段里
+   唯一的实体调用就是 `RamLogWrite`；
+3. 把 `SerialPortLib` 换成 `BaseSerialPortLibNull` 后，同一份代码一路冲进 DxeCore（调用根本不发生）。
+
+三条修复（都已提交）：
+
+| 仓库 | 文件 | 改动 |
+|---|---|---|
+| `Tlrenhb/uefi-enuma` | `Platforms/Xiaomi/enumaPkg/Library/MemoryMapLib/MemoryMapLib.c` | 增加 `{"Ramoops", 0xb0000000, 0x400000, ..., WRITE_BACK_XN}` |
+| `Tlrenhb/uefi-enuma` | `Platforms/Xiaomi/enumaPkg/enuma.dsc` | `PcdDebugPropertyMask = 0x0E`：ASSERT 只打印、不死循环 |
+| 构建流水线 | `ci/instrument_mmu.py` | 控制台写路径不再调用 `RamLogWrite`；显存区 / 几何 / 光标全部缓存到库静态 |
+
+> 注意 `{"AOSS", 0xb000000, 0x4000000}` 是 **0x0B000000**（7 位），不是 ramoops 的 `0xB0000000`，
+> 名字像但完全不是一块。这个坑记在这里，别再踩第二次。
+
+### 0.3 还差的三件事
+
+| 现象 | 实质 | 方向 |
+|---|---|---|
+| `[Bds] Connect ConIn Failed` | 没有 `ConIn` 设备，菜单只能等 10 秒超时后自己选默认项 | USB 键盘 / 触摸驱动接进 ConSplitter |
+| `no boot entry found` | UniXNU 没找到可引导条目 | payload 卷：内核 + Apple 根卷（`[payload]` 段） |
+| `drivers 0 / kits 0 / acpi 0` | UniXNU 侧三条注入链一条都没跑 | `UniXNUDxe` 的驱动加载、`Kext.c`、ACPI 注入 |
+
+已知的**非阻塞**外观问题：菜单上方有一小片彩色横条。已确认不是调试插桩画的（完全不含插桩代码的构建同样出现），
+且菜单的清屏没有覆盖那一条带；已定位到 `UniXNUUiDrawFrame` 的全屏 `FillRect` 与控制台 `AdvanceNewLine`
+回绕清行这两处，留待后续处理。**不影响任何功能。**
+
+---
 
 设备：小米平板 5 Pro 5G（codename `enuma`，SoC **SM8250-AC / 骁龙 870**，Kona）。
 参考实现：[UniXNU-sheng](https://github.com/UniXNU/UniXNU-sheng)（唯一完整样例，SM8550）、
