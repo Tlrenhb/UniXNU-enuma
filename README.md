@@ -4,9 +4,12 @@
 > 这是该设备第一次出现 UniXNU 界面：wordmark、4 个条目、选中高亮、倒计时、状态行全部正常。
 > 全过程只用 `fastboot boot` 热启动，**不写任何分区**。
 >
-> **还差三件事才算“能开机”**（见 §0.3）：`Connect ConIn Failed`（没有输入设备）、
-> `no boot entry found`（没有 payload，含内核与 Apple 卷）、
-> `drivers 0 loaded / 0 failed` `kits 0` `acpi 0`（UniXNU 侧驱动 / kext / ACPI 注入全为 0）。
+> **整条引导链已跑通**（见 §0.4）：FAT payload 卷 → 配置 → 菜单条目 → `LoadImage`/`StartImage`
+> → 程序执行并返回 `Success`。
+>
+> **还差三件事才算“能开机”**：`Connect ConIn Failed`（没有输入设备）、
+> 把探针 payload 换成真的 Apple payload（需要 `unixnu build kernel` 的交叉工具链）、
+> `drivers 0 loaded / 0 failed` `kits 0` `acpi 0`（配置里还没有 driver / kits / acpi 条目）。
 >
 > 构建走 GitHub Actions（产物在私有仓库 `Tlrenhb/enuma-build`），一轮约 3～4 分钟，
 > 产物是 `boot.img`（~1.9 MB）与 `SILICIUM_UEFI.fd`（3 MiB）。
@@ -60,7 +63,25 @@ ramoops 基址落在映射之外。MMU 一开，开机后第一次写控制台�
 > 注意 `{"AOSS", 0xb000000, 0x4000000}` 是 **0x0B000000**（7 位），不是 ramoops 的 `0xB0000000`，
 > 名字像但完全不是一块。这个坑记在这里，别再踩第二次。
 
-### 0.3 还差的三件事
+### 0.3 2026-10-31：加载链完整跑通
+
+```
+config: \EFI\UniXNU\unixnu.toml
+1  HelloPayload (bring-up)   efi
+'HelloPayload (bring-up)' returned: Success
+```
+
+`LoadImage` + `StartImage` 都成功，程序真的执行了。这条链上先后踩过三个坑：
+
+| 坑 | 现象 | 修法 |
+|---|---|---|
+| 整盘 FAT32 不合规 | `Unable to locate any 964E5B22-… handles`（`EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`） | 32 MiB 上强推 FAT32 只有八千多簇，远低于 65525 下限；改成 MBR + FAT16 分区 |
+| 固件里没有 `PartitionDxe` | 同上 | Android 的厂商 `DXE.inc` 不需要 ESP，90 条 INF 里没有它；在 `enuma.dsc` / `enuma.fdf` 各加一条 |
+| UEFI Secure Boot | 条目返回 `Access Denied` | `board.toml` 的 `ENABLE_SECUREBOOT` 由 `1` 改为 `0`（与 umi 一致） |
+
+> UEFI Secure Boot 与 Apple 的 trust cache 是两回事，关掉前者不影响后者。
+
+### 0.4 还差的三件事
 
 | 现象 | 实质 | 方向 |
 |---|---|---|
