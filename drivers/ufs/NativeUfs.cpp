@@ -1981,3 +1981,11 @@ void NativeUfs::stop (IOService *provider)
   fMap.reset ();
   IOService::stop (provider);
 }
+
+// enuma, read-only stage: define the IOStorageFamily bindings in this same translation unit. Keeping
+// them next to the references means no archive or link-order rule can drop them (the linker still
+// reported all eleven undefined when they lived in a separate object). Removed together with
+// NativeUfsStorageStubs.cpp once the real original bindings land.
+#if defined(ENUMA_UFS_STAGE_READONLY) && ENUMA_UFS_STAGE_READONLY
+#include "NativeUfsStorageStubs.cpp"
+#endif
