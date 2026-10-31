@@ -76,7 +76,10 @@ if component == 'NativeUfs':
     # enuma: build the vendored ShengUfs driver without NATIVE_VERIFIED_BLOCK (the verified-root
     # policy is a later stage), so it only needs the public IOStorageFamily headers plus its own.
     command += ['-I', str(ROOT / 'build/storage-abi/include'), '-I', str(ROOT / 'drivers/ufs'),
-                '-mgeneral-regs-only']
+                '-mgeneral-regs-only',
+                # The vendored sources were qualified against a tree whose headers did not trip
+                # these; they are noise here and would otherwise fail the -Werror build.
+                '-Wno-sign-conversion', '-Wno-shorten-64-to-32', '-Wno-unknown-warning-option']
 if component in ('NativeVirtioBlock', 'NativeRamBlock', 'NativeUfs'):
     command += ['-I', str(ROOT / 'build/storage-abi/include')]
     if args.verified_root:
@@ -100,7 +103,9 @@ if component == 'NativeAdreno':
 result = subprocess.run(command, cwd=record['directory'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 (out / 'compile.log').write_text(result.stdout)
 if result.returncode:
-    raise SystemExit(result.stdout[-3500:])
+    # The tail alone hides the first diagnostics; print the error lines and then the tail.
+    errors = [line for line in result.stdout.splitlines() if 'error:' in line]
+    raise SystemExit('\n'.join(errors[:40]) + '\n--- tail ---\n' + result.stdout[-1500:])
 data = destination.read_bytes()
 magic, cpu, subtype, kind, count, size = struct.unpack_from('<6I', data)
 if (magic, cpu, subtype, kind) != (0xfeedfacf, 0x100000c, 0, 1):

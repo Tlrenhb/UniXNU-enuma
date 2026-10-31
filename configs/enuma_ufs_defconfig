@@ -40,7 +40,10 @@ CONFIG_XNU_ARMVIRT_PLATFORM=n
 
 # —— 阶段 2 新增 ——
 CONFIG_XNU_NATIVE_UFS=y
-CONFIG_XNU_SMMU4K_PROBE=y
+# 首次 UFS 上机只做只读寄存器取证，用不到 SMMU 探针；而且 ArmSmmu4K 是 kit，
+# 本仓还没接它的 builder（内核链接会以 _native_smmu4k_probe 未定义失败）。
+# 等 UFS 寄存器取证通过、要开始 DMA 读扇区时再打开，并补 ArmSmmu4K 的归档。
+# CONFIG_XNU_SMMU4K_PROBE=y
 
 # 仍未打开（阶段 3/4 再开）：NATIVE_LEGACY_DISPLAY / 触摸、OWNER_* / VERIFIED_ROOT_PROBE /
 # NATIVE_RAM_BLOCK / SOURCE_MOCKFS / BOOT_PROGRESS / NATIVE_ADRENO。
