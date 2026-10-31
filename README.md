@@ -7,12 +7,17 @@
 > **整条引导链已跑通**（见 §0.4）：FAT payload 卷 → 配置 → 菜单条目 → `LoadImage`/`StartImage`
 > → 程序执行并返回 `Success`。
 >
-> **还差三件事才算“能开机”**：`Connect ConIn Failed`（没有输入设备）、
-> 把探针 payload 换成真的 Apple payload（需要 `unixnu build kernel` 的交叉工具链）、
+> **输入设备也通了**（2026-10-31 19:45 实机确认）：音量加/减移动选中高亮，电源键回车进条目。
+> `[Bds] Connect ConIn Failed` 不再出现 —— `EnumaButtonsDxe` 通过 SPMI PMIC arbiter 的观察读
+> 取 PM8150 PON / GPIO6 状态，装上带 DevicePath 的 `SimpleTextIn`，菜单据此把 `input` 报成 `yes`。
+>
+> **还差两件事才算“能开机”**：
+> 把探针 payload 换成真的 Apple payload（`unixnu build kernel` → `prelink` → `build payload`，
+> 内核步骤需要 macOS + Xcode，跑在公开仓的 `kernel.yml` 上）；
 > `drivers 0 loaded / 0 failed` `kits 0` `acpi 0`（配置里还没有 driver / kits / acpi 条目）。
 >
-> 构建走 GitHub Actions（产物在私有仓库 `Tlrenhb/enuma-build`），一轮约 3～4 分钟，
-> 产物是 `boot.img`（~1.9 MB）与 `SILICIUM_UEFI.fd`（3 MiB）。
+> 构建走 GitHub Actions（产物在私有仓库 `Tlrenhb/enuma-build`），一轮约 25 分钟，
+> 产物是 `boot.img`（35,106,816 B，内含 32 MiB 的 FAT16 payload 卷）与 `SILICIUM_UEFI.fd`（3 MiB）。
 >
 > 2026-10-23 的“pre-dump 完成态”描述已过时，但 §1 起的目录结构、数值出处与 umi 对照**仍然有效**。
 
@@ -81,13 +86,37 @@ config: \EFI\UniXNU\unixnu.toml
 
 > UEFI Secure Boot 与 Apple 的 trust cache 是两回事，关掉前者不影响后者。
 
-### 0.4 还差的三件事
+### 0.4 还差的两件事
 
 | 现象 | 实质 | 方向 |
 |---|---|---|
-| `[Bds] Connect ConIn Failed` | 没有 `ConIn` 设备，菜单只能等 10 秒超时后自己选默认项 | USB 键盘 / 触摸驱动接进 ConSplitter |
-| `no boot entry found` | UniXNU 没找到可引导条目 | payload 卷：内核 + Apple 根卷（`[payload]` 段） |
+| payload 还是探针程序 | 卷、配置、加载器都通了，里面装的却是一个 `HelloWorld.efi` | `unixnu build kernel` → `prelink` → `build payload`，再换掉卷里的文件 |
 | `drivers 0 / kits 0 / acpi 0` | UniXNU 侧三条注入链一条都没跑 | `UniXNUDxe` 的驱动加载、`Kext.c`、ACPI 注入 |
+
+> `[Bds] Connect ConIn Failed`（2026-10-30 的第一条）已在 2026-10-31 修掉，见 §0.5。
+
+### 0.5 2026-10-31 19:38–19:45：卷、输入、条目三件事同时成立
+
+```
+config: \EFI\UniXNU\unixnu.toml
+UNIXNU: menu: shown 1 entries, default 0 'hello', timeout -1 ms, input yes, rotate 0 ms
+1  HelloPayload (bring-up)   efi
+'HelloPayload (bring-up)' returned: Success
+drivers 0 loaded / 0 failed   kits 0   acpi 0
+```
+
+- `config:` 行出现 = 卷挂上、`unixnu.toml` 解析成功；`no boot entry found` 红字消失。
+- `default 0 'hello'` = `[boot] default` 生效。读到真配置文件时 UniXNU **不会**再追加内置 action，
+  列表就是 toml 里写的东西，所以只有 1 项是正确行为。
+- `timeout -1 ms` + `Select an entry`：payload 返回后菜单会重进一遍并**故意关掉倒计时**，避免自动重启死循环。
+- **音量键实测能移动高亮、电源键能进条目**（4 条目版本：2 个 efi + Restart + Power off，`timeout = -1`）。
+  `input yes` 本身只证明"存在带 DevicePath 的 `SimpleTextIn`"（`Menu.c:29 CountInputDevices` 的判据），
+  键值正确是由这条实测确认的。
+
+> 这一轮还顺手抓到一次自伤式回退：10:54 的两次提交基于**过期的本地副本**，把 05:14 加的
+> `PartitionDxe` 从 `enuma.dsc` 和 `enuma.fdf` 里一起删了（固件照样编译通过，只有上机才看得出来）。
+> 现已恢复（`eb94a1b`），并在私有构建里加了两道断言：构建前查 DSC/FDF 里三条 `.inf`，
+> 构建后查三个模块是否真的进了 `.fv`。
 
 已知的**非阻塞**外观问题：菜单上方有一小片彩色横条。已确认不是调试插桩画的（完全不含插桩代码的构建同样出现），
 且菜单的清屏没有覆盖那一条带；已定位到 `UniXNUUiDrawFrame` 的全屏 `FillRect` 与控制台 `AdvanceNewLine`
