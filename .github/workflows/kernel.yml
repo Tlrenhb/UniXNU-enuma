@@ -9,13 +9,18 @@ name: kernel (macOS, XNU + prelink)
 # multiplies consumption by 10, and nothing this job touches is private. It needs the UniXNU
 # main tree, this device repository and Apple's public IPSW — no vendor drop, no firmware.
 # The kernel it produces is handed to the private firmware build as a release asset.
+#
+# The revision is pinned (board.toml says the same thing: "不要用最新 upstream main"). Upstream
+# renamed the AES helper to build-software-aes-bindings.py and moved its objects to
+# build/software-aes in the days before this workflow existed; unpinned, a rename lands between
+# a green build and the next red one with nothing in this repository having changed.
 on:
   workflow_dispatch:
     inputs:
       kernel_sha:
-        description: UniXNU main revision to build (empty = repo default branch)
+        description: UniXNU revision to build (pinned; bump deliberately)
         required: false
-        default: ""
+        default: "67df14de69ae6f6ffc3480b30b70ce7667a3bd32"
       keep_ipsw:
         description: Keep the extracted IPSW members (debugging only, they are proprietary)
         type: boolean
