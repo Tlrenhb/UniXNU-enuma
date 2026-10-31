@@ -25,7 +25,8 @@ if args.negative_verified_block and not args.verified_root:
 component = args.component
 recipe = ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOPlatformExpert.cpo.json'
 record = json.loads(recipe.read_text().strip().rstrip(','))
-source = ROOT / 'drivers' / ('NativeMobileDisplay' if component in ('NativeLegacyDisplay','NativeGOPPresenter') else 'NativeMetal' if component in ('NativeOfflineGPU','NativeOfflineAccelerator','NativeIOGPUProviderProbe') else component) / {'NativeAdreno':'NativeAdrenoService.cpp'}.get(component, component + '.cpp')
+# enuma: the UFS driver is vendored at drivers/ufs (the component ID in format 2 is ShengUfs).
+source = (ROOT / 'drivers/ufs/NativeUfs.cpp') if component == 'NativeUfs' else ROOT / 'drivers' / ('NativeMobileDisplay' if component in ('NativeLegacyDisplay','NativeGOPPresenter') else 'NativeMetal' if component in ('NativeOfflineGPU','NativeOfflineAccelerator','NativeIOGPUProviderProbe') else component) / {'NativeAdreno':'NativeAdrenoService.cpp'}.get(component, component + '.cpp')
 # One deviation from the pipa copy this file came from: NativeAES writes into build/software-aes, not
 # build/native-aes. Current UniXNU renamed the AES helper to build-software-aes-bindings.py (the tree still
 # symlinks the old name), and both that helper and build-xnu-4k-baseline.sh hard-code
@@ -84,10 +85,9 @@ if component in ('NativeVirtioBlock', 'NativeRamBlock', 'NativeUfs'):
         command += ['-DNATIVE_VERIFIED_BLOCK_INJECT_FAULT=1']
     if args.verified_root_bundle:
         command += ['-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=1']
-if component == 'NativeUfs':
-    # enuma: the verified-root policy is a later stage, so this build leaves NATIVE_VERIFIED_BLOCK
-    # undefined (that whole block of NativeUfs.cpp compiles out). The stale branch this replaces
-    # pointed at drivers/NativeVirtioBlock, which does not exist in the tree.
+# enuma: the verified-root policy is a later stage, so NATIVE_VERIFIED_BLOCK stays undefined for
+# NativeUfs (that whole block of drivers/ufs/NativeUfs.cpp compiles out). The stale branch that
+# used to be here pointed at drivers/NativeVirtioBlock, which does not exist in the tree.
 if component=='NativeOfflineGPU':
     command += ['-I',str(ROOT/'drivers/NativeVirtioConsole')]
 if component in ('NativeLegacyDisplay','NativeHidInput'):
@@ -114,7 +114,8 @@ for _ in range(count):
     offset += length
 if deployment != (2, 0x110000):
     raise SystemExit(f'Unexpected platform deployment {deployment}')
-archive = out / ('lib' + component + '.a')
+# build-xnu-4k-baseline.sh force-loads build/sheng-ufs/libShengUfs.a when XNU_NATIVE_UFS=1.
+archive = out / (('libShengUfs.a') if component == 'NativeUfs' else ('lib' + component + '.a'))
 archive.unlink(missing_ok=True)
 subprocess.run(['xcrun', 'ar', 'rcs', archive, destination], check=True)
 print(f'{component}: -Werror build and actual ARM64/iOS 17 object audit passed')
