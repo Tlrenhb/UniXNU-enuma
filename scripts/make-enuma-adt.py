@@ -338,7 +338,9 @@ def main():
               # UFS at 0x01d84000 lies BELOW the arm-io window, so the node carries no reg; it
               # exists for class matching only (pipa:191-193). The SM8250 controller facts live in
               # astide kona.dtsi:3069-3079 (reg/IRQ SPI 265/2 lanes/19.2 MHz ref).
-              node('ufshc', [('compatible', b'qcom,sm8250-ufshc\0')])]),
+              # compatible must be the board DT's own string: kona.dtsi:3070 says
+              # "qcom,ufshc", and NativeUfs (drivers/ufs) matches on that substring.
+              node('ufshc', [('compatible', b'qcom,ufshc\0')])]),
     ])
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

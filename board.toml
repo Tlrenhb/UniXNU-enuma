@@ -117,6 +117,9 @@ archives = [
   "build-libpthread-kernel.py",
   "build-link-stubs.py",
   "build-platform-power.py",
+  # UFS: vendored ShengUfs driver. The kernel link force-loads build/sheng-ufs/libShengUfs.a
+  # when XNU_NATIVE_UFS=1, so this builder must write exactly that archive.
+  "build-arm-driver.py NativeUfs",
 ]
 
 [kernel.prelink]
@@ -270,7 +273,12 @@ skip_setup_tool = "scripts/seed-data-skip-setup.py"   # 主仓库的脚本（--s
 # padding window that the 0x9fd-byte screen no longer fits once a reset cave is added (report:
 # "panic screen is 0x9fd bytes at 0xfffffff0073ec680, the padding ends at 0xfffffff0073ecff0").
 # A reset probe answers the question on its own, so the screen is not needed for this round.
-panic_screen = true
+panic_screen = false
+entry_probe_reset_delay = 2
+entry_probe_reset_after = "_Assert"
+entry_probe_reset_in = "_ml_parse_cpu_topology.cold.16"
+entry_probe_reset_occurrence = 1
+entry_probe_reset_before = true
 # no reset probe: the real PMGR bridge + panic screen go on the device now
 # Stage-1 bisection (2026-10-31): both entry bars appear (blue = kernel entry, magenta = just before
 # the MMU write) and nothing after them, so the kernel is executing with the MMU on and then goes
@@ -296,7 +304,6 @@ trust_cache_sha256 = [
 # TODO(enuma): 后续阶段按实际启用的组件逐项往上加（显示、HID、boot-progress、存储）。
 kernel_args = [
   "-v",
-  "cpus=1",
   "serial=3",
   "debug=0x14e",
   "kt_fixed_zones=120",

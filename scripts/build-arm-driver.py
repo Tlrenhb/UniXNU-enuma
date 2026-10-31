@@ -34,7 +34,7 @@ source = ROOT / 'drivers' / ('NativeMobileDisplay' if component in ('NativeLegac
 out = ROOT / 'build' / {'ArmVirtPlatform': 'armvirt-platform', 'ArmDTPlatform': 'armdt-platform', 'ArmCpu': 'armcpu', 'NativeAES': 'software-aes',
                         'NativeVirtioBlock': 'native-virtio-block', 'NativeRamBlock': 'native-ram-block',
                         'NativeMobileDisplay': 'native-mobile-display', 'NativeVirtioConsole': 'native-virtio-console',
-                        'NativeLegacyDisplay': 'native-legacy-display', 'NativeGOPPresenter': 'native-gop-presenter', 'NativeOfflineGPU':'native-offline-gpu','NativeOfflineAccelerator':'native-offline-accelerator','NativeIOGPUProviderProbe':'native-original-provider', 'NativeUfs':'native-ufs', 'NativeHidInput':'native-hid-input', 'NativeKeyStoreEvents':'native-keystore-events', 'NativeAdreno':'native-adreno'}[component]
+                        'NativeLegacyDisplay': 'native-legacy-display', 'NativeGOPPresenter': 'native-gop-presenter', 'NativeOfflineGPU':'native-offline-gpu','NativeOfflineAccelerator':'native-offline-accelerator','NativeIOGPUProviderProbe':'native-original-provider', 'NativeUfs':'sheng-ufs', 'NativeHidInput':'native-hid-input', 'NativeKeyStoreEvents':'native-keystore-events', 'NativeAdreno':'native-adreno'}[component]
 if args.verified_root:
     out = ROOT / ('build/native-virtio-block-verified-fault' if args.negative_verified_block else 'build/native-virtio-block-verified')
     if args.verified_root_bundle:
@@ -71,6 +71,11 @@ while index < len(arguments):
 command.extend(['-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
                 '-Wno-c99-designator', '-Wno-reorder-init-list', '-Wno-deprecated-enum-enum-conversion',
                 '-Wno-unnecessary-virtual-specifier', '-I', str(ROOT / '.cache/xnu-work/osfmk')])
+if component == 'NativeUfs':
+    # enuma: build the vendored ShengUfs driver without NATIVE_VERIFIED_BLOCK (the verified-root
+    # policy is a later stage), so it only needs the public IOStorageFamily headers plus its own.
+    command += ['-I', str(ROOT / 'build/storage-abi/include'), '-I', str(ROOT / 'drivers/ufs'),
+                '-mgeneral-regs-only']
 if component in ('NativeVirtioBlock', 'NativeRamBlock', 'NativeUfs'):
     command += ['-I', str(ROOT / 'build/storage-abi/include')]
     if args.verified_root:
@@ -80,8 +85,9 @@ if component in ('NativeVirtioBlock', 'NativeRamBlock', 'NativeUfs'):
     if args.verified_root_bundle:
         command += ['-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=1']
 if component == 'NativeUfs':
-    command += ['-I', str(ROOT / 'kits/VerifiedRoot/include'), '-I', str(ROOT / 'drivers/NativeVirtioBlock'),
-                '-DNATIVE_VERIFIED_BLOCK=1', '-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=1', '-mgeneral-regs-only']
+    # enuma: the verified-root policy is a later stage, so this build leaves NATIVE_VERIFIED_BLOCK
+    # undefined (that whole block of NativeUfs.cpp compiles out). The stale branch this replaces
+    # pointed at drivers/NativeVirtioBlock, which does not exist in the tree.
 if component=='NativeOfflineGPU':
     command += ['-I',str(ROOT/'drivers/NativeVirtioConsole')]
 if component in ('NativeLegacyDisplay','NativeHidInput'):
