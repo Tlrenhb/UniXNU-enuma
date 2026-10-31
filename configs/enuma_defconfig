@@ -34,9 +34,6 @@ CONFIG_XNU_DT_PANIC_REGION=y
 CONFIG_XNU_NATIVE_ARCH_TIMER=y
 CONFIG_XNU_NATIVE_PAN=y
 CONFIG_XNU_SHENG_PMGR=y
-# UFS: the vendored ShengUfs driver, SM8250 constants in drivers/ufs/GccUfs.h.
-# Read-only probe first (native-ufs-probe=2); nothing is written to storage.
-CONFIG_XNU_NATIVE_UFS=y
 
 CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
 # 被裁掉组件的探针需要 no-op 钩子（scripts/build-link-stubs.py，通用）。

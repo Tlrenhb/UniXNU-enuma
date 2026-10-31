@@ -17,6 +17,10 @@ name: kernel (macOS, XNU + prelink)
 on:
   workflow_dispatch:
     inputs:
+      defconfig:
+        description: Device defconfig (stage 1 = enuma_defconfig, stage 2 = enuma_ufs_defconfig)
+        required: false
+        default: enuma_defconfig
       kernel_sha:
         description: UniXNU revision to build (pinned; bump deliberately)
         required: false
@@ -99,7 +103,7 @@ jobs:
 
       - name: Select the device
         working-directory: unixnu
-        run: ./unixnu defconfig enuma_defconfig
+        run: ./unixnu defconfig "${{ inputs.defconfig }}"
 
       - name: Fetch sources
         working-directory: unixnu
