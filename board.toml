@@ -211,7 +211,10 @@ packages = [
 ]
 
 [firmware.defines]
-ENABLE_SECUREBOOT = "1"              # sheng 用 1；umi 用 0（并配 DEVICE_MODEL="0"）。这是"固件签名策略"开关，
+ENABLE_SECUREBOOT = "0"                 # 2026-10-31: 首轮 fastboot boot 就撞在这上面——
+                                     # 菜单能列出 HelloPayload，但 StartImage 返回 Access Denied，
+                                     # 即 DxeImageVerificationLib 拒绝了未签名的 EFI 程序。
+                                     # 按本文件原来的注释与 umi 的先例降到 0。              # sheng 用 1；umi 用 0（并配 DEVICE_MODEL="0"）。这是"固件签名策略"开关，
                                      # 不是硬件事实：锁定用 1，实验性调试可用 0。若首轮 fastboot boot 卡在
                                      # 镜像校验，按 umi 的先例降到 0 再试一次（见 umi-cas-learnings.md）。
 MEMORY_PROTECTION = "TRUE"
