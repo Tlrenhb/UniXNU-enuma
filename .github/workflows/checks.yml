@@ -66,7 +66,10 @@ jobs:
         run: |
           python3 - <<'PY'
           import hashlib, pathlib, sys
-          expected = 'f0a78df8c5916c99552d153f73eca39161722e20af71a7647428acc75e0d5d7a'
+          expected = '296c7e91ad53250a02849bb76c6bae9d1c500039efc3d5256bf0744260b82718'
+          # Re-recorded 2026-10-31: the same DTB the firmware builds and the flashed boot images
+          # carry (boot.json dtb_sha256), 139 source files at astide 4ae1f1e. The previous pin
+          # (f0a78df8...) predates the astide merge and made this check fail on every run.
           for candidate in (pathlib.Path('out/astide/enuma.dtb'), pathlib.Path('out/enuma.dtb')):
               if candidate.exists():
                   digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
