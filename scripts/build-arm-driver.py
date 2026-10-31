@@ -79,7 +79,12 @@ if component == 'NativeUfs':
                 '-mgeneral-regs-only',
                 # The vendored sources were qualified against a tree whose headers did not trip
                 # these; they are noise here and would otherwise fail the -Werror build.
-                '-Wno-sign-conversion', '-Wno-shorten-64-to-32', '-Wno-unknown-warning-option']
+                '-Wno-sign-conversion', '-Wno-shorten-64-to-32', '-Wno-unknown-warning-option',
+                # Only the read-only register dump runs in this stage; the root publication path
+                # needs the real IOStorageFamily bindings, so it is compiled out at runtime by this
+                # define and the linker stubs in NativeUfsStorageStubs.cpp stand in for the four
+                # IOBlockStorageDevice symbols.
+                '-DENUMA_UFS_STAGE_READONLY=1']
 if component in ('NativeVirtioBlock', 'NativeRamBlock', 'NativeUfs'):
     command += ['-I', str(ROOT / 'build/storage-abi/include')]
     if args.verified_root:
@@ -122,5 +127,13 @@ if deployment != (2, 0x110000):
 # build-xnu-4k-baseline.sh force-loads build/sheng-ufs/libShengUfs.a when XNU_NATIVE_UFS=1.
 archive = out / (('libShengUfs.a') if component == 'NativeUfs' else ('lib' + component + '.a'))
 archive.unlink(missing_ok=True)
-subprocess.run(['xcrun', 'ar', 'rcs', archive, destination], check=True)
+objects = [destination]
+if component == 'NativeUfs':
+    # The read-only stage's link-time bindings for the IOStorageFamily symbols.
+    stubs = ROOT / 'drivers/ufs/NativeUfsStorageStubs.cpp'
+    stub_obj = out / 'NativeUfsStorageStubs.o'
+    subprocess.run(command[:-1] + ['-o', str(stub_obj), str(stubs)], cwd=record['directory'],
+                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=True)
+    objects.append(stub_obj)
+subprocess.run(['xcrun', 'ar', 'rcs', archive, *[str(o) for o in objects]], check=True)
 print(f'{component}: -Werror build and actual ARM64/iOS 17 object audit passed')

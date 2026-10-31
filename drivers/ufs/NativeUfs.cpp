@@ -1861,6 +1861,13 @@ bool NativeUfs::start (IOService *provider)
 bool NativeUfs::startRoot (IOService *provider)
 {
   const char *why = "";
+#if defined(ENUMA_UFS_STAGE_READONLY) && ENUMA_UFS_STAGE_READONLY
+  // enuma, first UFS stage: only the register dump (native-ufs-probe=2) runs. Publishing root
+  // windows needs the real IOStorageFamily bindings (see NativeUfsStorageStubs.cpp), so the block
+  // personality stays unreachable and the linker stubs are never executed.
+  IOLog ("NativeUfs: read-only stage - root publication disabled\n");
+  return false;
+#endif
   native_ufs_root_step = 1;
   if (!hostBringUp (&why)) {
     rootDiagnosticFailure (why);
