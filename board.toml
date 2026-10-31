@@ -252,7 +252,11 @@ tags_offset = 0x1e00000
 # with "FDT_ERR_EXISTS". sheng needs this block only because its stock DTB has no splash region.
 [payload]
 volume = "ENUMAESP"                  # FAT label，≤11 字符
-size_mib = 192
+# 192 是 sheng/pipa/umi 的值，它们要把 Data seed 一起打进卷里。阶段 1 的卷只有 kernel.macho
+# （51,838,976 B，2026-10-31 实测）加 ADT，64 MiB 已占 78%，而且 boot.img 的 ramdisk 会小到
+# 64 MiB —— 真机已验证过的唯一尺寸是 32 MiB（`fastboot boot` 在 0x1000000 处放 ramdisk，
+# 192 MiB 会一路顶到 0x0D000000，boot 分区本身才 96 MiB）。等要装 Data seed 时再抬回去。
+size_mib = 64
 loader = "firmware"
 title = "enuma first boot: source 4K XNU to the panic screen"
 timeout = -1                         # umi 用 -1（停在菜单不自动选）；首轮 bring-up 比自动启动更好用
@@ -262,7 +266,21 @@ timeout = -1                         # umi 用 -1（停在菜单不自动选）�
 #   = 0x2f9900000（12 GiB 机型）。enuma 有 6/8 GiB 两个版本，**必须实读**。
 dram_size = "0x200000000"          # measured 2026-10-23: highest System RAM bank ends at 0x280000000, minus the 0x80000000 DRAM base (owner probe: memtotal 7793540 kB, 8 GiB variant)
 skip_setup_tool = "scripts/seed-data-skip-setup.py"   # 主仓库的脚本（--skip-setup 用）
-panic_screen = true                  # 把 panic 屏打进 payload 里的内核副本：无 UART 时唯一的内核输出
+# Temporarily OFF while bisecting: the vendored probe script puts the panic screen in a 0x970-byte
+# padding window that the 0x9fd-byte screen no longer fits once a reset cave is added (report:
+# "panic screen is 0x9fd bytes at 0xfffffff0073ec680, the padding ends at 0xfffffff0073ecff0").
+# A reset probe answers the question on its own, so the screen is not needed for this round.
+panic_screen = true
+# Stage-1 bisection (2026-10-31): both entry bars appear (blue = kernel entry, magenta = just before
+# the MMU write) and nothing after them, so the kernel is executing with the MMU on and then goes
+# silent - the frame buffer is not mapped from there, and there is no UART. One reset probe asks one
+# question per boot: place an immediate PSCI SYSTEM_RESET at the call site instead of calling the
+# symbol, and a self-reboot means the kernel arrived there.
+#   answered 2026-10-31 20:35: the kprintf probe did NOT reset -> the kernel dies before it.
+#   question now: "does arm_vm_init () return?" (reset 2 s AFTER the call returns)
+# Validate the reset mechanism itself: stage 3 resets 6 s after the MMU is on. If the tablet does
+# NOT reboot here, then every earlier "no reset" answer was about the mechanism, not the kernel.
+# entry_probe_reset_delay off: panic screen + cpus=1, no reset probe
 # 与 sheng/pipa/umi 相同 IPSW 的两个原始 trust cache 哈希；现在可用公开脚本导出：
 #   UniXNU/scripts/build-original-system-trust.py + make-owner-trust-bundle.py
 trust_cache_sha256 = [
@@ -277,6 +295,7 @@ trust_cache_sha256 = [
 # TODO(enuma): 后续阶段按实际启用的组件逐项往上加（显示、HID、boot-progress、存储）。
 kernel_args = [
   "-v",
+  "cpus=1",
   "serial=3",
   "debug=0x14e",
   "kt_fixed_zones=120",
@@ -305,7 +324,11 @@ chip_id = "0x164"
 # 最终 root profile 用 0x130000000。
 # TODO(enuma): 用实机空闲物理区间校正（256 MiB..8 GiB、2 MiB 对齐，脚本里有断言）。
 #   root: adb shell su -c 'cat /proc/iomem'
-owned_memory_size = "0x100000000"
+# 0x100000000 是 pipa 的值（pipa 从未上机）。2026-10-31 上机日志显示 DarwinBoot 实际只给了
+# 256 MiB 的连续窗口（`args pa 0x10bf0000  window 0x10000000 bytes`），ADT 里却声明 4 GiB ——
+# 内核按 4 GiB 建页表、DarwinBoot 只映射了 256 MiB，结果就是在 arm_vm_init 里无声死掉。
+# 改为 umi 最小基线（同 SoC、真机跑通）的 0x10000000，先让两者一致。
+owned_memory_size = "0x10000000"
 root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"   # 同一 IPSW 的 OS 卷 UUID（pipa/umi 同值）
 # umi 在 SM8250 上实测 8 核全上线（validation.json: smp_attempt 50、logical_cpus_online 8、
 # 每核 120s 计时器读数 8 个），MPIDR 亲和值就是这一串。enuma 是同一颗 SoC 家族（4×A55 + 3×A77 + 1 prime）。

@@ -68,9 +68,14 @@ PAINT = """
   dsb sy
 """
 
+# Deviation from the upstream copy (Tlrenhb, 2026-10-31): the two entry bars move from band 1/2 to
+# band 12/13, i.e. from the top sixth of the panel to 75%/81% down. DarwinBoot's own console log is
+# written at the top and the bars were painting straight over it - on the hardware the log was
+# briefly visible and then covered ('打印一点日志但会被挡住'). Nothing else changes: the bars still
+# mean stage 1 and stage 2, they just stop destroying the only text channel the board has.
 SOURCES = {
-    1: ".text\n.global _start\n_start:\n" + PAINT.format(args='x0', band=1, lo='0x00FF', hi='0xFF00') + "  b target\n",
-    2: ".text\n.global _start\n_start:\n" + PAINT.format(args='x20', band=2, lo='0x00FF', hi='0xFFFF')
+    1: ".text\n.global _start\n_start:\n" + PAINT.format(args='x0', band=12, lo='0x00FF', hi='0xFF00') + "  b target\n",
+    2: ".text\n.global _start\n_start:\n" + PAINT.format(args='x20', band=13, lo='0x00FF', hi='0xFFFF')
        + "  msr SCTLR_EL1, x0\n  b target\n",
     3: """.text
 .global _start
