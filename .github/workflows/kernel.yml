@@ -117,6 +117,20 @@ jobs:
         working-directory: unixnu
         run: ./unixnu build kernel
 
+      # build-platform-power.py compiles the board's original-PMGR bridge against a kernel that
+      # already exists: on a fresh tree it archives a no-op sheng_pmgr_run and says so in
+      # logs/archive-09-build-platform-power.log ("no reference kernel yet ... build the kernel
+      # again to link the bridge"). A no-op bridge means AMFI panics on hardware with
+      # 'AMFI: No PMGR?' @ConfigurationSettings.cpp:235, so the second pass is not optional.
+      - name: Build the kernel again so the PMGR bridge is real
+        working-directory: unixnu
+        run: |
+          set -euo pipefail
+          ./unixnu build kernel
+          grep -q "no reference kernel yet" out/enuma/logs/archive-09-build-platform-power.log \
+            && { echo "::error::the PMGR bridge is still a no-op stub"; exit 1; } \
+            || echo "PMGR bridge: real implementation linked"
+
       - name: Prelink the kernel against the original kernelcache
         working-directory: unixnu
         run: ./unixnu build prelink
