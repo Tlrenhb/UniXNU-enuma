@@ -1,0 +1,154 @@
+name: kernel (macOS, XNU + prelink)
+
+# The kernel step is the one part of UniXNU that needs macOS: `unixnu build kernel` drives
+# scripts/build-xnu-4k-baseline.sh, which builds against the Xcode iphoneos SDK
+# (docs/zh/building.md:31 — "内核、userdata 和 Data 种子步骤调用 Xcode、hdiutil 和 diskutil。
+#  fork 后可以在 GitHub 的 macOS runner 上运行这些步骤，不需要本地 Mac").
+#
+# Why this lives in the public device repository and not in the private one: the macOS runner
+# multiplies consumption by 10, and nothing this job touches is private. It needs the UniXNU
+# main tree, this device repository and Apple's public IPSW — no vendor drop, no firmware.
+# The kernel it produces is handed to the private firmware build as a release asset.
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_sha:
+        description: UniXNU main revision to build (empty = repo default branch)
+        required: false
+        default: ""
+      keep_ipsw:
+        description: Keep the extracted IPSW members (debugging only, they are proprietary)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  kernel:
+    runs-on: macos-26
+    timeout-minutes: 300
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      UNIXNU_DEVICE: ${{ github.workspace }}/device
+      # The panic screen's Font.h comes from the Mu-Silicium checkout (no UART on this tablet,
+      # so the panic screen is the only kernel output channel).
+      UNIXNU_UEFI: ${{ github.workspace }}/uefi-pipa
+    steps:
+      - name: Check out UniXNU
+        uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: ${{ inputs.kernel_sha || 'main' }}
+          path: unixnu
+          persist-credentials: false
+
+      - name: Check out the device repository
+        uses: actions/checkout@v4
+        with:
+          repository: Tlrenhb/UniXNU-enuma
+          ref: main
+          path: device
+
+      - name: Check out the same-SoC UEFI port (panic screen font)
+        uses: actions/checkout@v4
+        with:
+          repository: xVanTuring/uefi-pipa
+          ref: pipa
+          path: uefi-pipa
+          fetch-depth: 1
+
+      - name: Report the toolchain
+        run: |
+          set -euo pipefail
+          sw_vers
+          echo "--- Xcodes"
+          ls -1 /Applications | grep -i '^Xcode' || true
+          # The image's default Xcode is used unless it is missing; never pin a version the image
+          # may not carry (the previous draft pinned Xcode_26.6 and would have died here).
+          if [ -n "${DEVELOPER_DIR:-}" ] && [ -d "$DEVELOPER_DIR" ]; then
+            echo "DEVELOPER_DIR from the environment: $DEVELOPER_DIR"
+          else
+            newest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+            echo "DEVELOPER_DIR=$newest/Contents/Developer" >> "$GITHUB_ENV"
+            echo "picked $newest"
+          fi
+          xcodebuild -version
+          echo "--- tools"
+          for t in git make clang cmake ninja unifdef python3 xcrun; do printf '%-8s ' "$t"; command -v "$t" || echo MISSING; done
+
+      - name: Install host tools
+        run: |
+          set -euo pipefail
+          brew install llvm lld
+          command -v unifdef >/dev/null || brew install unifdef
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+
+      - name: Confirm the panic screen font is reachable
+        run: |
+          set -euo pipefail
+          f="$UNIXNU_UEFI/Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib/Font.h"
+          test -f "$f" && echo "Font.h: $f"
+          ls -la "$f"
+
+      - name: Select the device
+        working-directory: unixnu
+        run: ./unixnu defconfig enuma_defconfig
+
+      - name: Fetch sources
+        working-directory: unixnu
+        run: ./unixnu fetch
+
+      - name: Assemble the build tree
+        working-directory: unixnu
+        run: ./unixnu tree
+
+      - name: Fetch the IPSW members (KernelCache for prelink, DeviceTree for the boot image)
+        working-directory: unixnu
+        run: ./unixnu ipsw fetch KernelCache DeviceTree StaticTrustCache Cryptex1,SystemTrustCache
+
+      - name: Build the kernel
+        working-directory: unixnu
+        run: ./unixnu build kernel
+
+      - name: Prelink the kernel against the original kernelcache
+        working-directory: unixnu
+        run: ./unixnu build prelink
+
+      - name: Report the artefacts
+        if: always()
+        working-directory: unixnu
+        run: |
+          set -uo pipefail
+          echo "--- out/enuma/kernel"
+          ls -la out/enuma/kernel 2>/dev/null || true
+          for f in out/enuma/kernel/kernel.macho out/enuma/kernel/kernel.json; do
+            [ -f "$f" ] && { stat -c '%n %s bytes' "$f" 2>/dev/null || stat -f '%N %z bytes' "$f"; shasum -a 256 "$f"; }
+          done
+          echo "--- logs"
+          ls -la out/enuma/logs 2>/dev/null | tail -20 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: enuma-kernel-${{ github.run_attempt }}
+          path: |
+            unixnu/out/enuma/kernel/**
+            unixnu/out/enuma/logs/*.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## enuma kernel (macOS)"
+            echo
+            echo "kernel.macho = source-built 4K XNU, prelinked against the iPad7,1 17.7.11 kernelcache."
+            echo "It is an input of the private firmware build, never a flashed image on its own."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove proprietary inputs
+        if: always() && !inputs.keep_ipsw
+        run: rm -rf unixnu/out/ipsw unixnu/out/feeds device/.cache/firmware unixnu/out/*/tree/.cache/firmware
