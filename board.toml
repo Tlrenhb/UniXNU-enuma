@@ -270,12 +270,8 @@ skip_setup_tool = "scripts/seed-data-skip-setup.py"   # 主仓库的脚本（--s
 # padding window that the 0x9fd-byte screen no longer fits once a reset cave is added (report:
 # "panic screen is 0x9fd bytes at 0xfffffff0073ec680, the padding ends at 0xfffffff0073ecff0").
 # A reset probe answers the question on its own, so the screen is not needed for this round.
-panic_screen = false
-entry_probe_reset_delay = 2
-entry_probe_reset_after = "_OSKextLoadKextWithIdentifier"
-entry_probe_reset_in = "_sheng_pmgr_run"
-entry_probe_reset_occurrence = 1
-entry_probe_reset_before = true
+panic_screen = true
+# no reset probe: the real PMGR bridge + panic screen go on the device now
 # Stage-1 bisection (2026-10-31): both entry bars appear (blue = kernel entry, magenta = just before
 # the MMU write) and nothing after them, so the kernel is executing with the MMU on and then goes
 # silent - the frame buffer is not mapped from there, and there is no UART. One reset probe asks one

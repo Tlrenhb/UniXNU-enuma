@@ -1,26 +1,25 @@
 # UniXNU-enuma
 
-> **当前状态（2026-10-31）：UniXNU 的菜单已经在 enuma 实机上跑起来了。**
-> 这是该设备第一次出现 UniXNU 界面：wordmark、4 个条目、选中高亮、倒计时、状态行全部正常。
-> 全过程只用 `fastboot boot` 热启动，**不写任何分区**。
+> **当前状态（2026-10-31 深夜）：源编 4 KiB XNU 已经在 enuma 实机上启动到 root mount。**
 >
-> **整条引导链已跑通**（见 §0.4）：FAT payload 卷 → 配置 → 菜单条目 → `LoadImage`/`StartImage`
-> → 程序执行并返回 `Success`。
+> 屏幕上的最后一行是内核自己的 panic：`Failed to mount root device @IOKitBSDInit.cpp:984`。
+> 也就是说 ABL → BootShim → Mu-Silicium → UniXNU 菜单 → DarwinBoot → XNU → `bsd_init` →
+> IOKitBSDInit 全部走通，卡点是**存储驱动和根文件系统**，不再是内核本身。
+> 全程只用 `fastboot boot` 热启动，**不写任何分区**。
 >
-> **输入设备也通了**（2026-10-31 19:45 实机确认）：音量加/减移动选中高亮，电源键回车进条目。
-> `[Bds] Connect ConIn Failed` 不再出现 —— `EnumaButtonsDxe` 通过 SPMI PMIC arbiter 的观察读
-> 取 PM8150 PON / GPIO6 状态，装上带 DevicePath 的 `SimpleTextIn`，菜单据此把 `input` 报成 `yes`。
+> 这一路上被实机证据钉死的四个坑（细节见 §0.6）：
+> 1. 固件控制台在开 MMU 后第一次写就 data abort（ramoops 落在最后一张页表之外）；
+> 2. payload 卷需要 `PartitionDxe`，否则没有 `SimpleFileSystem`；
+> 3. XNU 把 MPIDR 的 AFF1 当簇号用，而 kona 把核号放那儿 —— 第 5 颗核踩断言、静默挂死，
+>    目前用 `cpus=1` 绕过；
+> 4. `build-platform-power.py` 在全新树上只能链一个 no-op 的 `sheng_pmgr_run`，导致
+>    `AMFI: No PMGR?` —— 内核要构建两遍。
 >
-> **还差两件事才算“能开机”**：
-> 把探针 payload 换成真的 Apple payload（`unixnu build kernel` → `prelink` → `build payload`，
-> 内核步骤需要 macOS + Xcode，跑在公开仓的 `kernel.yml` 上）；
-> `drivers 0 loaded / 0 failed` `kits 0` `acpi 0`（配置里还没有 driver / kits / acpi 条目）。
+> **还差两件事才算"能用"**：SMP（AFF1/簇号映射）与存储（SM8250 的 UFS/ICE/PHY 常量 + 根卷）。
 >
-> 构建走 GitHub Actions（产物在私有仓库 `Tlrenhb/enuma-build`），一轮约 25 分钟，
-> 产物是 `boot.img`（35,106,816 B，内含 32 MiB 的 FAT16 payload 卷）与 `SILICIUM_UEFI.fd`（3 MiB）。
->
-> 2026-10-23 的“pre-dump 完成态”描述已过时，但 §1 起的目录结构、数值出处与 umi 对照**仍然有效**。
-
+> 构建：固件在私有仓 `Tlrenhb/enuma-build`（约 25 分钟），内核在公开仓的 `kernel.yml`
+> （macOS runner，两遍 `build kernel`，约 12 分钟）。产物 `boot.img` 65.5 MiB
+> （fd + 64 MiB FAT32 payload：`kernel.macho` 51,879,936 B + `kernel.macho.adt`）。
 ---
 
 ## 0. 2026-10-30 实机结果
@@ -94,6 +93,39 @@ config: \EFI\UniXNU\unixnu.toml
 | `drivers 0 / kits 0 / acpi 0` | UniXNU 侧三条注入链一条都没跑 | `UniXNUDxe` 的驱动加载、`Kext.c`、ACPI 注入 |
 
 > `[Bds] Connect ConIn Failed`（2026-10-30 的第一条）已在 2026-10-31 修掉，见 §0.5。
+
+### 0.6 2026-10-31 深夜：内核启动到 root mount（阶段 1 达成）
+
+屏幕上的完整取证（panic 屏由 `patch-xnu-entry-probe.py --panic-screen` 打进内核副本）：
+
+```
+args      pa 0x10bf0000  window 0x10000000 bytes
+video     base 0x9C000000  1600x2560  row 6400 bytes  32 bpp
+entry words 1400001E 00000000 00000000 00000000
+CurrentEL 1  SCTLR_EL1 0xC0180D  TCR_EL1 0x280803518
+ID_AA64MMFR0_EL1 0x101122  (PHRange 2, 4 KiB granule supported)
+Failed to mount root device @IOKitBSDInit.cpp:984
+TCR=0x000000022a51a251a   SCTLR=0x000000003454593d
+pages=0x00000000000bb7f   free=0x00000000000b384
+```
+
+四个坑，每个都是靠实机证据定下来的：
+
+| 坑 | 现象 | 根因与修法 |
+|---|---|---|
+| 入口探针盖住日志 | 选完条目只看到一闪而过的文字 | 色带原来画在 band 1/2（屏顶 1/8），正好压在 DarwinBoot 日志上；改到 band 12/13 |
+| `Out of Resources` | XNU 条目返回 `Out of Resources` | 内存表只有 51 MiB 的 `DXE Heap` 是 `Conv`；补 `Darwin RAM` / `Darwin High RAM`（照 umi） |
+| 静默挂死 | 开 MMU 后黑屏不动、连 `kprintf` 都到不了 | `ml_parse_cpu_topology` 里 `assert(phys_cluster_id <= MAX_CPU_CLUSTER_PHY_ID)`：Apple 把 MPIDR 的 AFF1 当簇号，kona 把核号放 AFF1；第 5 颗核就踩断言，而那时 pmap 还没建好、panic 画不出来。用 `cpus=1` 越过，SMP 待修 |
+| `AMFI: No PMGR?` | 越过之后内核在 `ConfigurationSettings.cpp:235` panic | `build-platform-power.py` 需要"已存在的内核"当参考，全新树上只链 no-op 桩（`_sheng_pmgr_run` 只有一条 `ret`）。内核构建两遍即得真桥（439 条指令，`kernel.macho` +40,960 B） |
+
+诊断手法（可复用）：
+
+- **复位探针**：`entry_probe_reset_after` / `_in` / `_occurrence` / `_before` 把一条调用换成 PSCI 复位，
+  一次上机回答一个问题；`--occurrence` 数的是**调用点**不是执行次数。复位机制本身要先验证
+  （`entry_probe_reset_delay = 6`，唯一能证明 SMC 通不通的办法）。
+- **本地迭代**：`unixnu build payload` + `unixnu bootimg` 在 Linux 上都能跑（需要 clang/ld.lld/llvm-objcopy），
+  10 秒出一个 boot.img，与 CI 产物逐字节一致（只差 gzip mtime），不用每轮等 25 分钟。
+- `fastboot boot` 报 `Load Error` 时 `fastboot reboot bootloader` 重进必好。
 
 ### 0.5 2026-10-31 19:38–19:45：卷、输入、条目三件事同时成立
 
