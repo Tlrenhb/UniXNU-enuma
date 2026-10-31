@@ -309,6 +309,9 @@ kernel_args = [
   "kt_fixed_zones=120",
   "armcpu-diagnostics=1",
   "sheng-pmgr=2",
+  # Read-only UFS inspection: NativeUfs dumps the GCC/UFSHCI state the bootloader left behind
+  # and panics, so the panic screen shows it. No storage access, no writes.
+  "native-ufs-probe=2",
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",
   # TODO(enuma): 屏蔽蜂窝/定位等服务（enuma 是 5G 机型；sheng 的名单是板级专属，需要重定）
