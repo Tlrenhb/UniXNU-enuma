@@ -132,8 +132,26 @@ if component == 'NativeUfs':
     # The read-only stage's link-time bindings for the IOStorageFamily symbols.
     stubs = ROOT / 'drivers/ufs/NativeUfsStorageStubs.cpp'
     stub_obj = out / 'NativeUfsStorageStubs.o'
-    subprocess.run(command[:-1] + ['-o', str(stub_obj), str(stubs)], cwd=record['directory'],
-                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=True)
+    # Reuse the driver's flags but swap the source and the output: drop the source path and the
+    # '-o <object>' pair, then append our own. (Slicing the tail instead mangles the argument list.)
+    stub_command = []
+    index = 0
+    while index < len(command):
+        value = command[index]
+        if value == str(source):
+            index += 1
+            continue
+        if value == '-o':
+            index += 2
+            continue
+        stub_command.append(value)
+        index += 1
+    stub_command += ['-o', str(stub_obj), str(stubs)]
+    result = subprocess.run(stub_command, cwd=record['directory'],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if result.returncode:
+        errors = [line for line in result.stdout.splitlines() if 'error:' in line]
+        raise SystemExit('NativeUfsStorageStubs.cpp:\n' + '\n'.join(errors[:20]) + '\n' + result.stdout[-800:])
     objects.append(stub_obj)
 subprocess.run(['xcrun', 'ar', 'rcs', archive, *[str(o) for o in objects]], check=True)
 print(f'{component}: -Werror build and actual ARM64/iOS 17 object audit passed')
