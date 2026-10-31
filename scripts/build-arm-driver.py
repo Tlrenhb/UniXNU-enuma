@@ -26,7 +26,10 @@ component = args.component
 recipe = ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOPlatformExpert.cpo.json'
 record = json.loads(recipe.read_text().strip().rstrip(','))
 # enuma: the UFS driver is vendored at drivers/ufs (the component ID in format 2 is ShengUfs).
-source = (ROOT / 'drivers/ufs/NativeUfs.cpp') if component == 'NativeUfs' else ROOT / 'drivers' / ('NativeMobileDisplay' if component in ('NativeLegacyDisplay','NativeGOPPresenter') else 'NativeMetal' if component in ('NativeOfflineGPU','NativeOfflineAccelerator','NativeIOGPUProviderProbe') else component) / {'NativeAdreno':'NativeAdrenoService.cpp'}.get(component, component + '.cpp')
+# enuma: the NativeUfs component name is served by the minimal read-only probe while the full
+# ShengUfs driver waits for the IOStorageFamily original bindings. The personalitity table that
+# CONFIG_XNU_NATIVE_UFS=1 installs matches "NativeUfs", so the class name is what matters.
+source = (ROOT / 'drivers/ufs/EnumaUfsProbe.cpp') if component == 'NativeUfs' else ROOT / 'drivers' / ('NativeMobileDisplay' if component in ('NativeLegacyDisplay','NativeGOPPresenter') else 'NativeMetal' if component in ('NativeOfflineGPU','NativeOfflineAccelerator','NativeIOGPUProviderProbe') else component) / {'NativeAdreno':'NativeAdrenoService.cpp'}.get(component, component + '.cpp')
 # One deviation from the pipa copy this file came from: NativeAES writes into build/software-aes, not
 # build/native-aes. Current UniXNU renamed the AES helper to build-software-aes-bindings.py (the tree still
 # symlinks the old name), and both that helper and build-xnu-4k-baseline.sh hard-code
