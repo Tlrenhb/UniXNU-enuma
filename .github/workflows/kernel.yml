@@ -24,7 +24,7 @@ on:
       kernel_sha:
         description: UniXNU revision to build (pinned; bump deliberately)
         required: false
-        default: "67df14de69ae6f6ffc3480b30b70ce7667a3bd32"
+        default: "a885256c53a234d1e9c3cadeaf44299a1ef75fe8"   # 2026-11-01 00:37
       keep_ipsw:
         description: Keep the extracted IPSW members (debugging only, they are proprietary)
         type: boolean

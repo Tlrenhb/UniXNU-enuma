@@ -124,7 +124,10 @@ archives = [
 
 [kernel.prelink]
 tool = "kits/NativePrelink/emit_prelink.py"
-kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
+# 2026-11-01: upstream 02f8cdd377 dropped the .noctf suffix from the kernel binary name
+# ("use mach.development.bcm2837.unstripped"); build-xnu-4k-baseline.sh now even unlinks the old
+# name. Keep this in sync with the pinned UniXNU revision in .github/workflows/kernel.yml.
+kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped"
 kernelcache_sha256 = "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7"
 slide = "-0x1000000"
 early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0"
