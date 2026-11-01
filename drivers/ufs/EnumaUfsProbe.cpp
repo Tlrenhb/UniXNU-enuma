@@ -134,40 +134,33 @@ static uint32_t swap32 (uint32_t v)
   return ((v & 0xffU) << 24) | ((v & 0xff00U) << 8) | ((v >> 8) & 0xff00U) | ((v >> 24) & 0xffU);
 }
 
-static void cacheClean (const void *start, size_t length)
-{
-  uintptr_t a = reinterpret_cast<uintptr_t> (start) & ~uintptr_t (63);
-  for (uintptr_t end = reinterpret_cast<uintptr_t> (start) + length; a < end; a += 64) {
-    __asm__ volatile ("dc civac, %0" :: "r" (a) : "memory");
-  }
-  __asm__ volatile ("dsb sy" ::: "memory");
-}
-
 static bool readSector0 (volatile uint32_t *hc, ReadReport *out, unsigned mode)
 {
-  const uint64_t kDmaBytes = 0x3000;             // UTRL 1 KiB + UCD 4 KiB + data 4 KiB, page aligned
-  IOBufferMemoryDescriptor *dma = IOBufferMemoryDescriptor::inTaskWithOptions (
-    kernel_task,
-    static_cast<IOOptionBits> (kIODirectionInOut) | static_cast<IOOptionBits> (kIOMemoryPhysicallyContiguous) |
-      static_cast<IOOptionBits> (kIOMemoryMapperNone),
-    kDmaBytes, 4096);
-  if (!dma) {
-    return false;
+  // The buffer matters more than the command: the vendored driver records a hardware session
+  // (2026-10-17) where a kernel-allocated buffer reset the system the moment the first command was
+  // issued, and that the controller's own request-list region is the one place its DMA is known to
+  // reach. So the UTRL, the UCD and the data page all live in the 16 KiB at the firmware's UTRLBA,
+  // which the bootloader already zeroed and handed over when we stopped the queue.
+  uint64_t utrl_phys = (uint64_t (out->utrba_hi) << 32) | out->utrba_lo;
+  if (!utrl_phys || (utrl_phys & 0x3ff)) {
+    out->ocs = 0xbafeU;                                // no usable list base from the firmware
+    return true;
   }
-  uint8_t *virt = static_cast<uint8_t *> (dma->getBytesNoCopy ());
-  IOByteCount contiguous = 0;
-  uint64_t phys = dma->getPhysicalSegment (0, &contiguous, kIOMemoryMapperNone);
-  if (!virt || !phys || (phys & 4095) || contiguous < kDmaBytes) {
-    return false;
+  volatile uint32_t *region = mapWindow (utrl_phys, 0x4000);
+  if (!region) {
+    out->ocs = 0xbaffU;                                // list region is not mappable
+    return true;
   }
-  bzero (virt, kDmaBytes);
-
-  uint8_t *utrl = virt;                 // 0x0000, 1 KiB aligned, 32 slots
-  uint8_t *ucd = virt + 0x1000;         // 0x1000
-  uint8_t *data = virt + 0x2000;        // 0x2000
-  uint64_t utrl_phys = phys;
-  uint64_t ucd_phys = phys + 0x1000;
-  uint64_t data_phys = phys + 0x2000;
+  uint8_t *utrl = reinterpret_cast<uint8_t *> (const_cast<uint32_t *> (region));
+  uint8_t *ucd = utrl + 0x1000;
+  uint8_t *data = utrl + 0x2000;
+  uint64_t ucd_phys = utrl_phys + 0x1000;
+  uint64_t data_phys = utrl_phys + 0x2000;
+  for (unsigned i = 0; i < 0x3000; ++i) {
+    utrl[i] = 0;
+  }
+  out->dma_lo = static_cast<uint32_t> (data_phys & 0xffffffffU);
+  out->dma_hi = static_cast<uint32_t> (data_phys >> 32);
 
   // ---- command UPIU (READ(10), LBA 0, 8 blocks = 4 KiB)
   uint8_t *cmd = ucd;
@@ -205,8 +198,6 @@ static bool readSector0 (volatile uint32_t *hc, ReadReport *out, unsigned mode)
   *reinterpret_cast<uint16_t *> (utrd + 26) = 128;    // response UPIU offset (dwords)
   *reinterpret_cast<uint16_t *> (utrd + 28) = 1;      // PRDT entries
   *reinterpret_cast<uint16_t *> (utrd + 30) = 256;    // PRDT offset (dwords)
-
-  cacheClean (virt, kDmaBytes);
 
   out->is_before = hc[0x20 >> 2];
   out->hcs = hc[0x30 >> 2];
