@@ -312,7 +312,7 @@ kernel_args = [
   # Read-only UFS probe. Mode 3 = dump the GCC/UFSHCI state the bootloader left behind, read the
   # pointer-authentication capability registers, then issue exactly ONE SCSI READ(10) for LBA 0
   # through our own UTRL/UTRD and panic with the result. No writes to storage at any point.
-  "native-ufs-probe=8",
+  "native-ufs-probe=9",
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",
   # TODO(enuma): 屏蔽蜂窝/定位等服务（enuma 是 5G 机型；sheng 的名单是板级专属，需要重定）

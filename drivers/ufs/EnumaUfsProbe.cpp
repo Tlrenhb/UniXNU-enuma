@@ -371,6 +371,42 @@ static bool readSector0 (volatile uint32_t *hc, ReadReport *out, unsigned mode)
     out->ocs = 0x5702U;                                // request list did not start
     return true;
   }
+  // Mode 9 is the bisection: a NOP UPIU carries no data segment and no PRDT entry, so if the
+  // doorbell still takes the tablet down then the problem is the doorbell/descriptor plumbing and
+  // not where the DMA buffer lives.
+  if (mode == 9) {
+    uint8_t *nop = utrl + 0x1000;                       // same UCD offset as the read path
+    for (unsigned i = 0; i < 32; ++i) {
+      nop[i] = 0;
+    }
+    nop[0] = 0x20;                                      // UPIU transaction: NOP OUT
+    nop[3] = 0x01;                                      // task tag
+    uint8_t *d0 = utrl;
+    *reinterpret_cast<uint32_t *> (d0 + 0) = 0x10000000U;          // direction 0: no data
+    *reinterpret_cast<uint32_t *> (d0 + 8) = 0x0fU;
+    *reinterpret_cast<uint32_t *> (d0 + 16) = static_cast<uint32_t> (ucd_phys & 0xffffffffU);
+    *reinterpret_cast<uint32_t *> (d0 + 20) = static_cast<uint32_t> (ucd_phys >> 32);
+    *reinterpret_cast<uint32_t *> (d0 + 24) = 128U | (128U << 16);
+    *reinterpret_cast<uint32_t *> (d0 + 28) = 0U;                  // no PRDT entries
+    hc[0x20 >> 2] = 1U;
+    hc[0x58 >> 2] = 1U;
+    __asm__ volatile ("dsb sy" ::: "memory");
+    uint32_t is = 0;
+    for (unsigned spin = 0; spin < 2000000U; ++spin) {
+      is = hc[0x20 >> 2];
+      if (is & 1U) {
+        break;
+      }
+      __asm__ volatile ("yield" ::: "memory");
+    }
+    __asm__ volatile ("dsb sy" ::: "memory");
+    out->is_after = is;
+    out->ocs = *reinterpret_cast<uint32_t *> (d0 + 8) & 0xffU;
+    out->status = nop[3];
+    hc[0x20 >> 2] = 1U;
+    return true;
+  }
+
   // Only these modes ring the doorbell. Mode 3 and mode 5 stop after the verified takeover, which is
   // what we want while the SMMU state is still unknown: the survey runs first and the command would
   // be the thing that faults.
