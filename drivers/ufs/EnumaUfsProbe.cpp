@@ -105,13 +105,6 @@ static char *str (char *out, const char *text)
   return out;
 }
 
-static char *sym (char *out, const char *name, uint64_t value, unsigned digits)
-{
-  out = str (out, name);
-  out = hex (out, value, digits);
-  return str (out, " ");
-}
-
 static char *dec (char *out, uint64_t value)
 {
   char tmp[24];
@@ -367,7 +360,7 @@ bool NativeUfs::start (IOService *provider)
   bool powered = (gdsc & 0x80000000U) != 0;
   bool busClocks = ((axi & 0x80000000U) == 0) && (axi & GCC_BRANCH_ENABLE_BIT) && (ahb & GCC_BRANCH_ENABLE_BIT);
 
-  uint32_t cap = 0, ver = 0, is = 0, hcs = 0, hce = 0, utrlba = 0, hcRead = 0;
+  uint32_t cap = 0, ver = 0, is = 0, hcs = 0, hce = 0, hcRead = 0;
   if (powered && busClocks) {
     volatile uint32_t *hc = mapWindow (UFS_HC_BASE, UFS_HC_SIZE);
     if (hc) {
@@ -376,7 +369,6 @@ bool NativeUfs::start (IOService *provider)
       is = at (hc, UFS_HC_BASE + 0x20, UFS_HC_BASE);
       hcs = at (hc, UFS_HC_BASE + 0x30, UFS_HC_BASE);
       hce = at (hc, UFS_HC_BASE + 0x34, UFS_HC_BASE);
-      utrlba = at (hc, UFS_HC_BASE + 0x50, UFS_HC_BASE);
       hcRead = 1;
     }
   }
