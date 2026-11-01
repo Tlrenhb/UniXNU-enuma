@@ -368,7 +368,10 @@ static bool readSector0 (volatile uint32_t *hc, ReadReport *out, unsigned mode)
   // Only these modes ring the doorbell. Mode 3 and mode 5 stop after the verified takeover, which is
   // what we want while the SMMU state is still unknown: the survey runs first and the command would
   // be the thing that faults.
-  const bool sendCommand = (mode == 4) || (mode >= 6);
+  // ONLY mode 4 and mode 8 ring the doorbell. Mode 6 (firmware descriptor) and mode 7 (SMMU tables)
+  // are read-only; the earlier 'mode >= 6' gate made mode 7 send the command, which is exactly the
+  // experiment that resets the tablet - that is what the last boot did instead of dumping tables.
+  const bool sendCommand = (mode == 4) || (mode == 8);
   if (!sendCommand) {
     out->ocs = (mode == 5) ? 0x0005U : 0x0003U;         // takeover verified, nothing sent
     return true;
