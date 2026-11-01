@@ -106,7 +106,7 @@ static void cacheClean (const void *start, size_t length)
   __asm__ volatile ("dsb sy" ::: "memory");
 }
 
-static bool readSector0 (volatile uint32_t *hc, ReadReport *out)
+static bool readSector0 (volatile uint32_t *hc, ReadReport *out, unsigned mode)
 {
   const uint64_t kDmaBytes = 0x3000;             // UTRL 1 KiB + UCD 4 KiB + data 4 KiB, page aligned
   IOBufferMemoryDescriptor *dma = IOBufferMemoryDescriptor::inTaskWithOptions (
@@ -176,14 +176,66 @@ static bool readSector0 (volatile uint32_t *hc, ReadReport *out)
   out->hce = hc[0x34 >> 2];
   out->dma_lo = static_cast<uint32_t> (phys & 0xffffffffU);
   out->dma_hi = static_cast<uint32_t> (phys >> 32);
+  out->utrba_lo = hc[0x50 >> 2];        // ABL's list address, kept for the report
+  out->utrba_hi = hc[0x54 >> 2];
 
-  // ---- program the list, start it, ring the doorbell
+  // ---- takeover guards, copied from the hardware-proven ShengUfs hostStopQueue/hostStartQueue
+  // (drivers/ufs/RootQueue.h). Round 1 reprogrammed UTRLBA with the firmware's list still running,
+  // and the tablet reset: these checks are what stop that from happening again.
+  const uint32_t kUfsFatalStatus = 0x71880U;          // TransferPoll.h
+  if (!(out->hce & 1U) || ((out->hcs & 0x0fU) != 0x0fU)) {
+    out->ocs = 0xf00dU;                                // controller not ready for takeover
+    return true;
+  }
+  out->utrldbr = hc[0x58 >> 2];
+  if (out->utrldbr != 0 || hc[0x78 >> 2] != 0) {
+    out->ocs = 0xdeedU;                                // a firmware request is still outstanding
+    return true;
+  }
+  if (out->is_before & kUfsFatalStatus) {
+    out->ocs = 0xbad0U;                                // the firmware left a fatal condition
+    return true;
+  }
+
+  // stop the list, wait for the run bit to read back zero
+  hc[0x24 >> 2] = 0;                                   // interrupt mask
+  hc[0x60 >> 2] = 0;
+  __asm__ volatile ("dsb sy" ::: "memory");
+  bool stopped = false;
+  for (unsigned spin = 0; spin < 20000U; ++spin) {
+    if ((hc[0x60 >> 2] & 1U) == 0) { stopped = true; break; }
+    __asm__ volatile ("yield" ::: "memory");
+  }
+  if (!stopped) {
+    out->ocs = 0x5701U;                                // request list did not stop
+    return true;
+  }
+
+  // program our list, verify the address took, clear stale status, then start it
   hc[0x50 >> 2] = static_cast<uint32_t> (utrl_phys & 0xffffffffU);
   hc[0x54 >> 2] = static_cast<uint32_t> (utrl_phys >> 32);
   __asm__ volatile ("dsb sy" ::: "memory");
-  hc[0x60 >> 2] = 1;                                  // UTRLRSR: run
+  if (hc[0x50 >> 2] != static_cast<uint32_t> (utrl_phys & 0xffffffffU) ||
+      hc[0x54 >> 2] != static_cast<uint32_t> (utrl_phys >> 32)) {
+    out->ocs = 0xadd1U;                                // address did not stick
+    return true;
+  }
+  hc[0x20 >> 2] = out->is_before;
+  hc[0x60 >> 2] = 1;
   __asm__ volatile ("dsb sy" ::: "memory");
-  hc[0x20 >> 2] = out->is_before;                     // clear pending status bits
+  bool ready = false;
+  for (unsigned spin = 0; spin < 20000U; ++spin) {
+    if ((hc[0x60 >> 2] & 1U) && ((hc[0x30 >> 2] & 3U) == 3U)) { ready = true; break; }
+    __asm__ volatile ("yield" ::: "memory");
+  }
+  if (!ready) {
+    out->ocs = 0x5702U;                                // request list did not start
+    return true;
+  }
+  if (mode < 4) {
+    out->ocs = 0x0003U;                                // takeover verified, command not sent (mode 3)
+    return true;
+  }
   hc[0x58 >> 2] = 1;                                  // doorbell: slot 0
   __asm__ volatile ("dsb sy" ::: "memory");
 
@@ -291,7 +343,7 @@ bool NativeUfs::start (IOService *provider)
   if (mode >= 3) {
     volatile uint32_t *hc = mapWindow (UFS_HC_BASE, UFS_HC_SIZE);
     if (hc) {
-      didRead = readSector0 (hc, &report);
+      didRead = readSector0 (hc, &report, mode);
     }
   }
 
