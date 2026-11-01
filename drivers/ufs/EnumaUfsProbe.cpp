@@ -132,6 +132,11 @@ struct ReadReport {
   uint16_t smmuMatch;      // index of an SMR whose SID matches 0x60, 0xffff = none
   uint32_t smmuSmr, smmuS2cr, smmuCbar, smmuSctlr;
   uint32_t nsmr, smmuValid;
+  // The bootloader's own descriptor, read back verbatim: ground truth for the layout this
+  // controller expects (offsets, units, PRDT encoding) without inventing anything.
+  uint32_t utrd[8];
+  uint64_t ucdBase;
+  uint32_t ucdWords[8];
 };
 
 static uint32_t swap32 (uint32_t v)
@@ -179,6 +184,35 @@ static void smmuSurvey (ReadReport *out)
     out->smmuCbar = smmu[(0x1000 >> 2) + bank];
     out->smmuSctlr = smmu[((cbBase + bank) * 0x1000 >> 2) + 0];
   }
+}
+
+// Read-only dump of the bootloader's own request descriptor and the command descriptor it points at.
+// Two doorbells have already reset this tablet, and both times nothing said why; the firmware's own
+// UTRD/UCD is the one sample of a layout this controller demonstrably accepted, so it is worth
+// reading back field by field instead of guessing at offsets. Nothing is written here.
+static bool dumpFirmwareQueue (ReadReport *out)
+{
+  uint64_t base = (uint64_t (out->utrba_hi) << 32) | out->utrba_lo;
+  if (!base) {
+    out->ocs = 0xbafeU;
+    return true;
+  }
+  volatile uint32_t *list = mapWindow (base, 0x1000);
+  if (!list) {
+    out->ocs = 0xbaffU;
+    return true;
+  }
+  for (unsigned i = 0; i < 8; ++i) {
+    out->utrd[i] = list[i];
+  }
+  // DW4/DW5 are the command descriptor address, so the UCD can be followed without assuming where
+  // the firmware put it.
+  out->ucdBase = (uint64_t (list[5]) << 32) | list[4];
+  volatile uint32_t *ucd = out->ucdBase ? mapWindow (out->ucdBase, 0x1000) : nullptr;
+  for (unsigned i = 0; i < 8 && ucd; ++i) {
+    out->ucdWords[i] = ucd[i];
+  }
+  return true;
 }
 
 static bool readSector0 (volatile uint32_t *hc, ReadReport *out, unsigned mode)
@@ -426,7 +460,10 @@ bool NativeUfs::start (IOService *provider)
   }
   // mode 3 also issues one READ(10) through our own UTRL/UTRD and reports what came back.
   bool    didRead = false;
-  if (mode >= 3) {
+  if (mode == 6) {
+    // Read-only: no takeover, no writes - just the firmware's own descriptor.
+    dumpFirmwareQueue (&report);
+  } else if (mode >= 3) {
     volatile uint32_t *hc = mapWindow (UFS_HC_BASE, UFS_HC_SIZE);
     if (hc) {
       didRead = readSector0 (hc, &report, mode);
@@ -487,7 +524,19 @@ bool NativeUfs::start (IOService *provider)
   at = text::str (at, " s2cr=");       at = text::hex (at, report.smmuS2cr, 8);
   at = text::str (at, "\n     cbar="); at = text::hex (at, report.smmuCbar, 8);
   at = text::str (at, " sctlr=");      at = text::hex (at, report.smmuSctlr, 8);
-  at = text::str (at, "\nread ocs=");   at = text::dec (at, report.ocs);
+  at = text::str (at, "\nfw utrd ");
+  for (unsigned i = 0; i < 8; ++i) {
+    at = text::hex (at, report.utrd[i], 8);
+    *at++ = (i == 7) ? '\n' : ' ';
+  }
+  at = text::str (at, "   ucd=");      at = text::hex (at, report.ucdBase >> 32, 8);
+  at = text::hex (at, report.ucdBase & 0xffffffffU, 8);
+  at = text::str (at, "\nfw ucd ");
+  for (unsigned i = 0; i < 8; ++i) {
+    at = text::hex (at, report.ucdWords[i], 8);
+    *at++ = (i == 7) ? '\n' : ' ';
+  }
+  at = text::str (at, "read ocs=");   at = text::dec (at, report.ocs);
   at = text::str (at, " status=");      at = text::dec (at, report.status);
   at = text::str (at, " resid=");       at = text::dec (at, report.residual);
   at = text::str (at, " is_before=");   at = text::hex (at, report.is_before, 8);
