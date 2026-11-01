@@ -202,9 +202,9 @@ static bool readSector0 (volatile uint32_t *hc, ReadReport *out, unsigned mode)
   out->is_before = hc[0x20 >> 2];
   out->hcs = hc[0x30 >> 2];
   out->hce = hc[0x34 >> 2];
-  out->dma_lo = static_cast<uint32_t> (phys & 0xffffffffU);
-  out->dma_hi = static_cast<uint32_t> (phys >> 32);
-  out->utrba_lo = hc[0x50 >> 2];        // ABL's list address, kept for the report
+  out->dma_lo = static_cast<uint32_t> (data_phys & 0xffffffffU);
+  out->dma_hi = static_cast<uint32_t> (data_phys >> 32);
+  out->utrba_lo = hc[0x50 >> 2];        // the list base we took over, kept for the report
   out->utrba_hi = hc[0x54 >> 2];
 
   // ---- takeover guards, copied from the hardware-proven ShengUfs hostStopQueue/hostStartQueue
