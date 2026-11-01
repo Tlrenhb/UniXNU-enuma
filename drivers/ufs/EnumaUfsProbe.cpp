@@ -136,6 +136,15 @@ static uint32_t swap32 (uint32_t v)
 
 static bool readSector0 (volatile uint32_t *hc, ReadReport *out, unsigned mode)
 {
+  // The firmware's list base has to be read before anything else: the region the buffers live in is
+  // taken from it (a previous revision computed the addresses from an uninitialised field and would
+  // have reported 0xbafe for every boot).
+  out->is_before = hc[0x20 >> 2];
+  out->hcs = hc[0x30 >> 2];
+  out->hce = hc[0x34 >> 2];
+  out->utrba_lo = hc[0x50 >> 2];
+  out->utrba_hi = hc[0x54 >> 2];
+
   // The buffer matters more than the command: the vendored driver records a hardware session
   // (2026-10-17) where a kernel-allocated buffer reset the system the moment the first command was
   // issued, and that the controller's own request-list region is the one place its DMA is known to
@@ -199,13 +208,7 @@ static bool readSector0 (volatile uint32_t *hc, ReadReport *out, unsigned mode)
   *reinterpret_cast<uint16_t *> (utrd + 28) = 1;      // PRDT entries
   *reinterpret_cast<uint16_t *> (utrd + 30) = 256;    // PRDT offset (dwords)
 
-  out->is_before = hc[0x20 >> 2];
-  out->hcs = hc[0x30 >> 2];
-  out->hce = hc[0x34 >> 2];
-  out->dma_lo = static_cast<uint32_t> (data_phys & 0xffffffffU);
-  out->dma_hi = static_cast<uint32_t> (data_phys >> 32);
-  out->utrba_lo = hc[0x50 >> 2];        // the list base we took over, kept for the report
-  out->utrba_hi = hc[0x54 >> 2];
+  // (is_before/hcs/hce/utrba were captured before the takeover; data_phys was set with the buffers)
 
   // ---- takeover guards, copied from the hardware-proven ShengUfs hostStopQueue/hostStartQueue
   // (drivers/ufs/RootQueue.h). Round 1 reprogrammed UTRLBA with the firmware's list still running,
