@@ -17,6 +17,10 @@ name: kernel (macOS, XNU + prelink)
 on:
   workflow_dispatch:
     inputs:
+      storage_audit:
+        description: Also qualify the original IOStorageFamily ABI and build the UFS bindings
+        required: false
+        default: false
       defconfig:
         description: Device defconfig (stage 1 = enuma_defconfig, stage 2 = enuma_ufs_defconfig)
         required: false
@@ -126,6 +130,47 @@ jobs:
       # logs/archive-09-build-platform-power.log ("no reference kernel yet ... build the kernel
       # again to link the bridge"). A no-op bridge means AMFI panics on hardware with
       # 'AMFI: No PMGR?' @ConfigurationSettings.cpp:235, so the second pass is not optional.
+      # The original-bindings route upstream uses for storage: compile the real IOStorageFamily
+      # class, qualify its ABI against the prelinked kernel, then resolve every virtual slot of the
+      # concrete UFS block class either to its own override or to the recorded original address.
+      # Without this the block personality cannot link at all, which is where this port stopped.
+      - name: Fetch the reference IOStorageFamily source
+        if: inputs.storage_audit == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p unixnu/refer
+          git clone --quiet https://github.com/apple-oss-distributions/IOStorageFamily.git unixnu/refer/IOStorageFamily
+          cd unixnu/refer/IOStorageFamily
+          git checkout --quiet e45fbe30a7879e0b16e26dddb78538f1b00e0bff
+          git rev-parse HEAD
+
+      - name: Qualify the original storage ABI
+        if: inputs.storage_audit == 'true'
+        working-directory: unixnu
+        run: |
+          set -euo pipefail
+          python3 scripts/audit-storage-interface.py
+          python3 -c "import json;d=json.load(open('build/storage-abi/interface-audit.json'));print('slots',d['method_slots'],'vtable',d['vtable'],'live4k',d['live_native_4k'])"
+
+      - name: Build the UFS original bindings
+        if: inputs.storage_audit == 'true'
+        working-directory: unixnu
+        run: |
+          set -euo pipefail
+          python3 scripts/build-enuma-ufs-bindings.py
+          ls -l build/sheng-ufs/bindings.json build/sheng-ufs/libNativeUfsBlock.a
+
+      - name: Upload the bindings
+        if: inputs.storage_audit == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: enuma-ufs-bindings
+          path: |
+            unixnu/build/storage-abi/interface-audit.json
+            unixnu/build/sheng-ufs/bindings.json
+            unixnu/build/sheng-ufs/libNativeUfsBlock.a
+          if-no-files-found: warn
+
       - name: Build the kernel again so the PMGR bridge is real
         working-directory: unixnu
         run: |
