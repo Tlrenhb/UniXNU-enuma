@@ -127,11 +127,58 @@ struct ReadReport {
   uint32_t is_before, is_after, hcs, hce, utrldbr, utrlrsr;
   uint32_t utrba_lo, utrba_hi, dma_lo, dma_hi;
   uint8_t first[16];
+  // SMMU survey (read only): is the UFS stream bypassed, and what does the fault log say?
+  uint32_t scr0, idr0, idr1, gfsr, gsynr0;
+  uint16_t smmuMatch;      // index of an SMR whose SID matches 0x60, 0xffff = none
+  uint32_t smmuSmr, smmuS2cr, smmuCbar, smmuSctlr;
+  uint32_t nsmr, smmuValid;
 };
 
 static uint32_t swap32 (uint32_t v)
 {
   return ((v & 0xffU) << 24) | ((v & 0xff00U) << 8) | ((v >> 8) & 0xff00U) | ((v >> 24) & 0xffU);
+}
+
+// Read-only apps-SMMU survey (same registers and walk as NativeUfs::inspectSmmu in the vendored
+// driver): SCR0/IDR0/IDR1/GFSR, then the SMR/S2CR table looking for a stream whose SID matches 0x60
+// (the id sheng used for the UFS stream), and the matching context bank's CBAR/SCTLR. Nothing written.
+static void smmuSurvey (ReadReport *out)
+{
+  volatile uint32_t *smmu = mapWindow (0x15000000ULL, 0xd0000);
+  if (!smmu) {
+    out->scr0 = 0xdeadbeefU;
+    return;
+  }
+  out->scr0 = smmu[0x00 >> 2];
+  out->idr0 = smmu[0x20 >> 2];
+  out->idr1 = smmu[0x24 >> 2];
+  out->gfsr = smmu[0x48 >> 2];
+  out->gsynr0 = smmu[0x4c >> 2];
+  unsigned count = out->idr0 & 0xffU;
+  if (count > 128U) {
+    count = 128U;
+  }
+  out->nsmr = count;
+  out->smmuMatch = 0xffffU;
+  unsigned cbBase = 1U << (((out->idr1 >> 28) & 7U) + 1);
+  for (unsigned index = 0; index < count; ++index) {
+    uint32_t smr = smmu[(0x800 >> 2) + index];
+    uint32_t s2cr = smmu[(0xc00 >> 2) + index];
+    if (smr & 0x80000000U) {
+      out->smmuValid++;
+      uint32_t mask = (smr >> 16) & 0x7fffU;
+      if (out->smmuMatch == 0xffffU && (((smr ^ 0x60U) & 0x7fffU) & ~mask) == 0) {
+        out->smmuMatch = static_cast<uint16_t> (index);
+        out->smmuSmr = smr;
+        out->smmuS2cr = s2cr;
+      }
+    }
+  }
+  if (out->smmuMatch != 0xffffU) {
+    unsigned bank = out->smmuMatch;
+    out->smmuCbar = smmu[(0x1000 >> 2) + bank];
+    out->smmuSctlr = smmu[((cbBase + bank) * 0x1000 >> 2) + 0];
+  }
 }
 
 static bool readSector0 (volatile uint32_t *hc, ReadReport *out, unsigned mode)
@@ -263,8 +310,12 @@ static bool readSector0 (volatile uint32_t *hc, ReadReport *out, unsigned mode)
     out->ocs = 0x5702U;                                // request list did not start
     return true;
   }
-  if (mode < 4) {
-    out->ocs = 0x0003U;                                // takeover verified, command not sent (mode 3)
+  // Only these modes ring the doorbell. Mode 3 and mode 5 stop after the verified takeover, which is
+  // what we want while the SMMU state is still unknown: the survey runs first and the command would
+  // be the thing that faults.
+  const bool sendCommand = (mode == 4) || (mode >= 6);
+  if (!sendCommand) {
+    out->ocs = (mode == 5) ? 0x0005U : 0x0003U;         // takeover verified, nothing sent
     return true;
   }
   hc[0x58 >> 2] = 1;                                  // doorbell: slot 0
@@ -367,8 +418,13 @@ bool NativeUfs::start (IOService *provider)
     }
   }
 
-  // mode 3 also issues one READ(10) through our own UTRL/UTRD and reports what came back.
+  // The SMMU survey runs before any command: if the UFS stream is not bypassed, a command would
+  // fault on its own DMA and take the tablet down before a single line could be printed.
   ReadReport report = {};
+  if (mode >= 3) {
+    smmuSurvey (&report);
+  }
+  // mode 3 also issues one READ(10) through our own UTRL/UTRD and reports what came back.
   bool    didRead = false;
   if (mode >= 3) {
     volatile uint32_t *hc = mapWindow (UFS_HC_BASE, UFS_HC_SIZE);
@@ -420,6 +476,17 @@ bool NativeUfs::start (IOService *provider)
   at = text::str (at, " apa=");         at = text::dec (at, apa);
   at = text::str (at, " api=");         at = text::dec (at, api);
   at = text::str (at, " apa3=");        at = text::dec (at, apa3);
+  at = text::str (at, "\nsmmu scr0="); at = text::hex (at, report.scr0, 8);
+  at = text::str (at, " idr0=");       at = text::hex (at, report.idr0, 8);
+  at = text::str (at, " idr1=");       at = text::hex (at, report.idr1, 8);
+  at = text::str (at, " gfsr=");       at = text::hex (at, report.gfsr, 8);
+  at = text::str (at, "\n     nsmr="); at = text::dec (at, report.nsmr);
+  at = text::str (at, " valid=");      at = text::dec (at, report.smmuValid);
+  at = text::str (at, " sid60=");      at = text::hex (at, report.smmuMatch, 4);
+  at = text::str (at, " smr=");        at = text::hex (at, report.smmuSmr, 8);
+  at = text::str (at, " s2cr=");       at = text::hex (at, report.smmuS2cr, 8);
+  at = text::str (at, "\n     cbar="); at = text::hex (at, report.smmuCbar, 8);
+  at = text::str (at, " sctlr=");      at = text::hex (at, report.smmuSctlr, 8);
   at = text::str (at, "\nread ocs=");   at = text::dec (at, report.ocs);
   at = text::str (at, " status=");      at = text::dec (at, report.status);
   at = text::str (at, " resid=");       at = text::dec (at, report.residual);
