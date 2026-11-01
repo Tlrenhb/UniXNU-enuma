@@ -137,6 +137,11 @@ struct ReadReport {
   uint32_t utrd[8];
   uint64_t ucdBase;
   uint32_t ucdWords[8];
+  // Every valid stream-match row (there is exactly one on this machine) plus the first banks of the
+  // context-bank table: enough to see which stream is configured and how.
+  uint32_t smrRows[8][3];   // index, SMR, S2CR
+  unsigned smrRowCount;
+  uint32_t cbar[8], sctlr[8];
 };
 
 static uint32_t swap32 (uint32_t v)
@@ -183,6 +188,22 @@ static void smmuSurvey (ReadReport *out)
     unsigned bank = out->smmuMatch;
     out->smmuCbar = smmu[(0x1000 >> 2) + bank];
     out->smmuSctlr = smmu[((cbBase + bank) * 0x1000 >> 2) + 0];
+  }
+  // Collect every valid row: the SMR/S2CR pair says which stream it is and whether that stream is
+  // bypassed (S2CR[17:16] == 0b10) or translated by a page table.
+  for (unsigned index = 0; index < count && out->smrRowCount < 8; ++index) {
+    uint32_t smr = smmu[(0x800 >> 2) + index];
+    if (!(smr & 0x80000000U)) {
+      continue;
+    }
+    out->smrRows[out->smrRowCount][0] = index;
+    out->smrRows[out->smrRowCount][1] = smr;
+    out->smrRows[out->smrRowCount][2] = smmu[(0xc00 >> 2) + index];
+    out->smrRowCount++;
+  }
+  for (unsigned bank = 0; bank < 8 && bank < cbBase; ++bank) {
+    out->cbar[bank] = smmu[(0x1000 >> 2) + bank];
+    out->sctlr[bank] = smmu[((cbBase + bank) * 0x1000 >> 2) + 0];
   }
 }
 
@@ -524,6 +545,23 @@ bool NativeUfs::start (IOService *provider)
   at = text::str (at, " s2cr=");       at = text::hex (at, report.smmuS2cr, 8);
   at = text::str (at, "\n     cbar="); at = text::hex (at, report.smmuCbar, 8);
   at = text::str (at, " sctlr=");      at = text::hex (at, report.smmuSctlr, 8);
+  at = text::str (at, "\nsmr rows ");
+  at = text::dec (at, report.smrRowCount);
+  for (unsigned i = 0; i < report.smrRowCount; ++i) {
+    at = text::str (at, " [");
+    at = text::dec (at, report.smrRows[i][0]);
+    at = text::str (at, "]=");
+    at = text::hex (at, report.smrRows[i][1], 8);
+    *at++ = '/';
+    at = text::hex (at, report.smrRows[i][2], 8);
+  }
+  at = text::str (at, "\ncb ");
+  for (unsigned i = 0; i < 8; ++i) {
+    at = text::hex (at, report.cbar[i], 8);
+    *at++ = ':';
+    at = text::hex (at, report.sctlr[i], 8);
+    *at++ = ' ';
+  }
   at = text::str (at, "\nfw utrd ");
   for (unsigned i = 0; i < 8; ++i) {
     at = text::hex (at, report.utrd[i], 8);
