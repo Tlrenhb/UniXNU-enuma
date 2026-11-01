@@ -301,8 +301,14 @@ static bool readSector0 (volatile uint32_t *hc, ReadReport *out, unsigned mode)
   *reinterpret_cast<uint32_t *> (prdt + 8) = 0;
   *reinterpret_cast<uint32_t *> (prdt + 12) = 4096 - 1;   // size field is bytes-1
 
-  // ---- UTRD slot 0
+  // ---- UTRD slot 0, exactly as ShengUfs's hostSubmit writes it:
+  //   DW0 = 0x10000000 | (direction << 25), direction 2 = device -> host (a read)
+  //   DW2 = 0x0f, and the controller reports the overall command status in DW2[7:0]
+  //   DW6 = rsp length (dwords) | rsp offset (dwords) << 16
+  //   DW7 = prdt count | prdt offset (dwords) << 16
   uint8_t *utrd = utrl;
+  *reinterpret_cast<uint32_t *> (utrd + 0) = 0x10000000U | (2U << 25);
+  *reinterpret_cast<uint32_t *> (utrd + 8) = 0x0fU;
   *reinterpret_cast<uint32_t *> (utrd + 16) = static_cast<uint32_t> (ucd_phys & 0xffffffffU);
   *reinterpret_cast<uint32_t *> (utrd + 20) = static_cast<uint32_t> (ucd_phys >> 32);
   *reinterpret_cast<uint16_t *> (utrd + 24) = 128;    // response UPIU length (dwords)
@@ -395,11 +401,11 @@ static bool readSector0 (volatile uint32_t *hc, ReadReport *out, unsigned mode)
   out->utrba_lo = hc[0x50 >> 2];
   out->utrba_hi = hc[0x54 >> 2];
 
-  // ---- read back the response UPIU and the data
+  // ---- read back the descriptor and the data
   __asm__ volatile ("dsb sy" ::: "memory");
-  hc[0x20 >> 2] = 0xffffffffU;                        // clear all status bits
+  hc[0x20 >> 2] = 1U;                                 // acknowledge completion only, keep error evidence
+  out->ocs = *reinterpret_cast<const uint32_t *> (utrd + 8) & 0xffU;   // OCS lives in UTRD DW2[7:0]
   const uint8_t *rsp = ucd + 512;
-  out->ocs = rsp[2];
   out->status = rsp[3];
   out->residual = swap32 (*reinterpret_cast<const uint32_t *> (rsp + 12));
   for (unsigned i = 0; i < sizeof (out->first); ++i) {
@@ -500,7 +506,7 @@ bool NativeUfs::start (IOService *provider)
   uint32_t apa3 = static_cast<uint32_t> ((isar2 >> 4) & 0xf);   // QARMA3 variant
 
   // Build the report here and hand panic() a single string (see the note on the formatter above).
-  char msg[1024];
+  char msg[2048];   // the report outgrew 1024 and walked into ReadReport on the stack
   char *at = msg;
   at = text::str (at, "NATIVE_UFS mode=");
   at = text::dec (at, mode);
