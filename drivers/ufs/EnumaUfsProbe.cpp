@@ -51,6 +51,23 @@ static uint32_t at (volatile uint32_t *base, uint64_t absolute, uint64_t window)
   return base[static_cast<uint32_t> ((absolute - window) >> 2)];
 }
 
+// CPU capability, read alongside the UFS dump: does this SoC implement pointer authentication (the
+// arm64e prerequisite)? ID_AA64ISAR1_EL1.APA/API and ID_AA64ISAR2_EL1.APA3 are the fields Apple's
+// arm64e kernel relies on. 0 = not implemented, 1 = implemented (Armv8.3), 2 = QARMA3 variant.
+static uint64_t idIsar1 (void)
+{
+  uint64_t v;
+  __asm__ volatile ("isb; mrs %0, id_aa64isar1_el1" : "=r" (v));
+  return v;
+}
+
+static uint64_t idIsar2 (void)
+{
+  uint64_t v;
+  __asm__ volatile ("isb; mrs %0, id_aa64isar2_el1" : "=r" (v));
+  return v;
+}
+
 IOService *NativeUfs::probe (IOService *provider, SInt32 *score)
 {
   // Second personality: the root device starts before the platform expert publishes IOResources, so
@@ -106,14 +123,21 @@ bool NativeUfs::start (IOService *provider)
     }
   }
 
+  uint64_t isar1 = idIsar1 (), isar2 = idIsar2 ();
+  uint32_t apa = static_cast<uint32_t> ((isar1 >> 4) & 0xf);    // APAddr: 1 = PAC in EL1&0
+  uint32_t api = static_cast<uint32_t> ((isar1 >> 8) & 0xf);    // APInt
+  uint32_t apa3 = static_cast<uint32_t> ((isar2 >> 4) & 0xf);   // QARMA3 variant
+
   panic ("NATIVE_UFS inspect (read only)\n"
          "gdsc=%08x axi=%08x ahb=%08x\n"
          "unipro=%08x txsym=%08x rxsym=%08x\n"
          "aux=%08x aggre=%08x\n"
          "powered=%u busclocks=%u hc_read=%u\n"
          "cap=%08x ver=%08x hcs=%08x\n"
-         "hce=%08x is=%08x utrlba=%08x",
+         "hce=%08x is=%08x utrlba=%08x\n"
+         "isar1=%016llx isar2=%016llx apa=%u api=%u apa3=%u",
          gdsc, axi, ahb, unipro, txsym, rxsym, aux, aggre,
-         powered ? 1u : 0u, busClocks ? 1u : 0u, hcRead, cap, ver, hcs, hce, is, utrlba);
+         powered ? 1u : 0u, busClocks ? 1u : 0u, hcRead, cap, ver, hcs, hce, is, utrlba,
+         isar1, isar2, apa, api, apa3);
   return false;
 }
