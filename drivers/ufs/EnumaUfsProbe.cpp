@@ -68,6 +68,20 @@ static uint64_t idIsar2 (void)
   return v;
 }
 
+// Anchor set for the ID-register readings: MIDR_EL1 identifies the core, so a plausible MIDR means
+// the surrounding ID_AA64* reads can be trusted. (The first attempt printed an ID_AA64ISAR1_EL1 value
+// with reserved field encodings, which is why this check exists.)
+#define READ_SYSREG(fn, reg) \
+  static uint64_t fn (void) { uint64_t v; __asm__ volatile ("isb; mrs %0, " #reg : "=r" (v)); return v; }
+READ_SYSREG (readMidr,   midr_el1)
+READ_SYSREG (readIsar0,  id_aa64isar0_el1)
+READ_SYSREG (readPfr0,   id_aa64pfr0_el1)
+READ_SYSREG (readPfr1,   id_aa64pfr1_el1)
+READ_SYSREG (readMfr0,   id_aa64mmfr0_el1)
+READ_SYSREG (readCtr,    ctr_el0)
+READ_SYSREG (readRevIdr, revidr_el1)
+#undef READ_SYSREG
+
 IOService *NativeUfs::probe (IOService *provider, SInt32 *score)
 {
   // Second personality: the root device starts before the platform expert publishes IOResources, so
@@ -135,9 +149,12 @@ bool NativeUfs::start (IOService *provider)
          "powered=%u busclocks=%u hc_read=%u\n"
          "cap=%08x ver=%08x hcs=%08x\n"
          "hce=%08x is=%08x utrlba=%08x\n"
-         "isar1=%016llx isar2=%016llx apa=%u api=%u apa3=%u",
+         "isar1=%016llx isar2=%016llx apa=%u api=%u apa3=%u\n"
+         "midr=%08llx revidr=%016llx isar0=%016llx\n"
+         "pfr0=%016llx pfr1=%016llx mmfr0=%016llx ctr=%08llx",
          gdsc, axi, ahb, unipro, txsym, rxsym, aux, aggre,
          powered ? 1u : 0u, busClocks ? 1u : 0u, hcRead, cap, ver, hcs, hce, is, utrlba,
-         isar1, isar2, apa, api, apa3);
+         isar1, isar2, apa, api, apa3,
+         readMidr (), readRevIdr (), readIsar0 (), readPfr0 (), readPfr1 (), readMfr0 (), readCtr ());
   return false;
 }
