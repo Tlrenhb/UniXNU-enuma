@@ -20,6 +20,8 @@
 #include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
+#include <libkern/libkern.h>
 #include <pexpert/pexpert.h>
 #include "GccUfs.h"
 
@@ -66,6 +68,152 @@ static uint64_t idIsar2 (void)
   uint64_t v;
   __asm__ volatile ("isb; mrs %0, id_aa64isar2_el1" : "=r" (v));
   return v;
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// One SCSI READ(10) through our own UTRL/UTRD (native-ufs-probe>=3), LBA 0 on LUN 0.
+//
+// Layouts are the Linux/vendor ones (drivers/scsi/ufs/ufshci.h, ufshcd.c):
+//   UTRD   32 B: header DW0-3, UCD base lo/hi (DW4-5), then DW6 = {rsp_upiu_length, rsp_upiu_offset}
+//                and DW7 = {prd_table_length, prd_table_offset}; the two offsets are in DWORDs.
+//   UCD    4 KiB: command UPIU at +0 (512 B), response UPIU at +512 (512 B), PRDT at +1024.
+//   PRDT   16 B per entry: base_lo, base_hi, reserved, size (bytes-1).
+//   Command UPIU 32 B: 12-byte header, expected data length, 16-byte CDB.
+// Offsets used: rsp offset 512>>2 = 128, rsp length 512>>2 = 128, prd offset 1024>>2 = 256.
+// Registers: UTRLBA 0x50, UTRLBAU 0x54, UTRLDBR 0x58, IS 0x20 (bit0 UTRCS), UTRLRSR 0x60.
+// Nothing is written to storage: this is READ(10) only.
+struct ReadReport {
+  uint32_t ocs;        // response UPIU byte 2
+  uint32_t status;     // response UPIU byte 3
+  uint32_t residual;   // response UPIU bytes 12-15 (big endian)
+  uint32_t is_before, is_after, hcs, hce, utrldbr, utrlrsr;
+  uint32_t utrba_lo, utrba_hi, dma_lo, dma_hi;
+  uint8_t first[16];
+};
+
+static uint32_t swap32 (uint32_t v)
+{
+  return ((v & 0xffU) << 24) | ((v & 0xff00U) << 8) | ((v >> 8) & 0xff00U) | ((v >> 24) & 0xffU);
+}
+
+static void cacheClean (const void *start, size_t length)
+{
+  uintptr_t a = reinterpret_cast<uintptr_t> (start) & ~uintptr_t (63);
+  for (uintptr_t end = reinterpret_cast<uintptr_t> (start) + length; a < end; a += 64) {
+    __asm__ volatile ("dc civac, %0" :: "r" (a) : "memory");
+  }
+  __asm__ volatile ("dsb sy" ::: "memory");
+}
+
+static bool readSector0 (volatile uint32_t *hc, ReadReport *out)
+{
+  const uint64_t kDmaBytes = 0x3000;             // UTRL 1 KiB + UCD 4 KiB + data 4 KiB, page aligned
+  IOBufferMemoryDescriptor *dma = IOBufferMemoryDescriptor::inTaskWithOptions (
+    kernel_task,
+    static_cast<IOOptionBits> (kIODirectionInOut) | static_cast<IOOptionBits> (kIOMemoryPhysicallyContiguous) |
+      static_cast<IOOptionBits> (kIOMemoryMapperNone),
+    kDmaBytes, 4096);
+  if (!dma) {
+    return false;
+  }
+  uint8_t *virt = static_cast<uint8_t *> (dma->getBytesNoCopy ());
+  IOByteCount contiguous = 0;
+  uint64_t phys = dma->getPhysicalSegment (0, &contiguous, kIOMemoryMapperNone);
+  if (!virt || !phys || (phys & 4095) || contiguous < kDmaBytes) {
+    return false;
+  }
+  bzero (virt, kDmaBytes);
+
+  uint8_t *utrl = virt;                 // 0x0000, 1 KiB aligned, 32 slots
+  uint8_t *ucd = virt + 0x1000;         // 0x1000
+  uint8_t *data = virt + 0x2000;        // 0x2000
+  uint64_t utrl_phys = phys;
+  uint64_t ucd_phys = phys + 0x1000;
+  uint64_t data_phys = phys + 0x2000;
+
+  // ---- command UPIU (READ(10), LBA 0, 8 blocks = 4 KiB)
+  uint8_t *cmd = ucd;
+  cmd[0] = 0x01;                        // UPIU transaction: command
+  cmd[1] = 0x40;                        // flags: R (device -> host)
+  cmd[2] = 0x00;                        // LUN 0
+  cmd[3] = 0x01;                        // task tag
+  cmd[4] = 0x00;                        // IID
+  cmd[5] = 0x00;                        // command set: SCSI
+  cmd[6] = 0x00;
+  cmd[7] = 0x00;
+  cmd[8] = 0x00;                        // EHS length 0
+  cmd[9] = 0x00; cmd[10] = 0x00; cmd[11] = 0x00;   // data segment length 0
+  cmd[12] = 0x00; cmd[13] = 0x00; cmd[14] = 0x10; cmd[15] = 0x00;   // 4096, big endian
+  uint8_t *cdb = cmd + 16;
+  cdb[0] = 0x28;                        // READ(10)
+  cdb[1] = 0x00;
+  cdb[2] = 0; cdb[3] = 0; cdb[4] = 0; cdb[5] = 0;    // LBA 0
+  cdb[6] = 0x00;
+  cdb[7] = 0x00; cdb[8] = 0x08;         // 8 blocks
+  cdb[9] = 0x00;
+
+  // ---- PRDT entry 0 -> data buffer
+  uint8_t *prdt = ucd + 1024;
+  *reinterpret_cast<uint32_t *> (prdt + 0) = static_cast<uint32_t> (data_phys & 0xffffffffU);
+  *reinterpret_cast<uint32_t *> (prdt + 4) = static_cast<uint32_t> (data_phys >> 32);
+  *reinterpret_cast<uint32_t *> (prdt + 8) = 0;
+  *reinterpret_cast<uint32_t *> (prdt + 12) = 4096 - 1;   // size field is bytes-1
+
+  // ---- UTRD slot 0
+  uint8_t *utrd = utrl;
+  *reinterpret_cast<uint32_t *> (utrd + 16) = static_cast<uint32_t> (ucd_phys & 0xffffffffU);
+  *reinterpret_cast<uint32_t *> (utrd + 20) = static_cast<uint32_t> (ucd_phys >> 32);
+  *reinterpret_cast<uint16_t *> (utrd + 24) = 128;    // response UPIU length (dwords)
+  *reinterpret_cast<uint16_t *> (utrd + 26) = 128;    // response UPIU offset (dwords)
+  *reinterpret_cast<uint16_t *> (utrd + 28) = 1;      // PRDT entries
+  *reinterpret_cast<uint16_t *> (utrd + 30) = 256;    // PRDT offset (dwords)
+
+  cacheClean (virt, kDmaBytes);
+
+  out->is_before = hc[0x20 >> 2];
+  out->hcs = hc[0x30 >> 2];
+  out->hce = hc[0x34 >> 2];
+  out->dma_lo = static_cast<uint32_t> (phys & 0xffffffffU);
+  out->dma_hi = static_cast<uint32_t> (phys >> 32);
+
+  // ---- program the list, start it, ring the doorbell
+  hc[0x50 >> 2] = static_cast<uint32_t> (utrl_phys & 0xffffffffU);
+  hc[0x54 >> 2] = static_cast<uint32_t> (utrl_phys >> 32);
+  __asm__ volatile ("dsb sy" ::: "memory");
+  hc[0x60 >> 2] = 1;                                  // UTRLRSR: run
+  __asm__ volatile ("dsb sy" ::: "memory");
+  hc[0x20 >> 2] = out->is_before;                     // clear pending status bits
+  hc[0x58 >> 2] = 1;                                  // doorbell: slot 0
+  __asm__ volatile ("dsb sy" ::: "memory");
+
+  // ---- poll for completion (bit0 UTRCS), bounded
+  uint32_t is = 0;
+  for (unsigned spin = 0; spin < 2000000U; ++spin) {
+    is = hc[0x20 >> 2];
+    if (is & 0x1U) {
+      break;
+    }
+    __asm__ volatile ("yield" ::: "memory");
+  }
+  __asm__ volatile ("dsb sy" ::: "memory");
+  out->is_after = is;
+  out->utrldbr = hc[0x58 >> 2];
+  out->utrlrsr = hc[0x60 >> 2];
+  out->utrba_lo = hc[0x50 >> 2];
+  out->utrba_hi = hc[0x54 >> 2];
+
+  // ---- read back the response UPIU and the data
+  __asm__ volatile ("dsb sy" ::: "memory");
+  hc[0x20 >> 2] = 0xffffffffU;                        // clear all status bits
+  const uint8_t *rsp = ucd + 512;
+  out->ocs = rsp[2];
+  out->status = rsp[3];
+  out->residual = swap32 (*reinterpret_cast<const uint32_t *> (rsp + 12));
+  for (unsigned i = 0; i < sizeof (out->first); ++i) {
+    out->first[i] = data[i];
+  }
+  return true;
 }
 
 // Anchor set for the ID-register readings: MIDR_EL1 identifies the core, so a plausible MIDR means
@@ -137,6 +285,16 @@ bool NativeUfs::start (IOService *provider)
     }
   }
 
+  // mode 3 also issues one READ(10) through our own UTRL/UTRD and reports what came back.
+  ReadReport report = {};
+  bool    didRead = false;
+  if (mode >= 3) {
+    volatile uint32_t *hc = mapWindow (UFS_HC_BASE, UFS_HC_SIZE);
+    if (hc) {
+      didRead = readSector0 (hc, &report);
+    }
+  }
+
   uint64_t isar1 = idIsar1 (), isar2 = idIsar2 ();
   uint32_t apa = static_cast<uint32_t> ((isar1 >> 4) & 0xf);    // APAddr: 1 = PAC in EL1&0
   uint32_t api = static_cast<uint32_t> ((isar1 >> 8) & 0xf);    // APInt
@@ -151,10 +309,21 @@ bool NativeUfs::start (IOService *provider)
          "hce=%08x is=%08x utrlba=%08x\n"
          "isar1=%016llx isar2=%016llx apa=%u api=%u apa3=%u\n"
          "midr=%08llx revidr=%016llx isar0=%016llx\n"
-         "pfr0=%016llx pfr1=%016llx mmfr0=%016llx ctr=%08llx",
+         "pfr0=%016llx pfr1=%016llx mmfr0=%016llx ctr=%08llx\n"
+         "read=%u ocs=%u status=%u resid=%u\n"
+         "is_before=%08x is_after=%08x dbr=%08x rsr=%08x\n"
+         "utrba=%08x%08x dma=%08x%08x\n"
+         "sector0=%02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x",
          gdsc, axi, ahb, unipro, txsym, rxsym, aux, aggre,
          powered ? 1u : 0u, busClocks ? 1u : 0u, hcRead, cap, ver, hcs, hce, is, utrlba,
          isar1, isar2, apa, api, apa3,
-         readMidr (), readRevIdr (), readIsar0 (), readPfr0 (), readPfr1 (), readMfr0 (), readCtr ());
+         readMidr (), readRevIdr (), readIsar0 (), readPfr0 (), readPfr1 (), readMfr0 (), readCtr (),
+         didRead ? 1u : 0u, report.ocs, report.status, report.residual,
+         report.is_before, report.is_after, report.utrldbr, report.utrlrsr,
+         report.utrba_hi, report.utrba_lo, report.dma_hi, report.dma_lo,
+         report.first[0], report.first[1], report.first[2], report.first[3],
+         report.first[4], report.first[5], report.first[6], report.first[7],
+         report.first[8], report.first[9], report.first[10], report.first[11],
+         report.first[12], report.first[13], report.first[14], report.first[15]);
   return false;
 }
