@@ -138,15 +138,16 @@ jobs:
         if: inputs.storage_audit == 'true'
         run: |
           set -euo pipefail
-          mkdir -p unixnu/refer
-          git clone --quiet https://github.com/apple-oss-distributions/IOStorageFamily.git unixnu/refer/IOStorageFamily
-          cd unixnu/refer/IOStorageFamily
+          mkdir -p unixnu/out/enuma/tree/refer
+          git clone --quiet https://github.com/apple-oss-distributions/IOStorageFamily.git \
+            unixnu/out/enuma/tree/refer/IOStorageFamily
+          cd unixnu/out/enuma/tree/refer/IOStorageFamily
           git checkout --quiet e45fbe30a7879e0b16e26dddb78538f1b00e0bff
           git rev-parse HEAD
 
       - name: Qualify the original storage ABI
         if: inputs.storage_audit == 'true'
-        working-directory: unixnu
+        working-directory: unixnu/out/enuma/tree
         run: |
           set -euo pipefail
           python3 scripts/audit-storage-interface.py
@@ -154,7 +155,7 @@ jobs:
 
       - name: Build the UFS original bindings
         if: inputs.storage_audit == 'true'
-        working-directory: unixnu
+        working-directory: unixnu/out/enuma/tree
         run: |
           set -euo pipefail
           python3 scripts/build-enuma-ufs-bindings.py
@@ -166,9 +167,9 @@ jobs:
         with:
           name: enuma-ufs-bindings
           path: |
-            unixnu/build/storage-abi/interface-audit.json
-            unixnu/build/sheng-ufs/bindings.json
-            unixnu/build/sheng-ufs/libNativeUfsBlock.a
+            unixnu/out/enuma/tree/build/storage-abi/interface-audit.json
+            unixnu/out/enuma/tree/build/sheng-ufs/bindings.json
+            unixnu/out/enuma/tree/build/sheng-ufs/libNativeUfsBlock.a
           if-no-files-found: warn
 
       - name: Build the kernel again so the PMGR bridge is real
