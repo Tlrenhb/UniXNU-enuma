@@ -1,0 +1,116 @@
+name: format2 (macOS, release --check then the full release)
+
+# Format-2 path: the device repository is a schema-2 board, the SoC package comes from feeds.toml and
+# the kernel patches come from the profile chain (arch -> soc -> os -> device). This workflow exists
+# in parallel with kernel.yml (format 1) so the two can be compared until format 2 is green; nothing
+# here replaces the format-1 pipeline until it passes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      defconfig:
+        description: Device defconfig (schema 2 keeps it in board.toml [kernel])
+        required: false
+        default: enuma_ufs_defconfig
+      full:
+        description: Run the whole release (kernel, payload, boot image), not just --check
+        type: boolean
+        default: false
+      kernel_sha:
+        description: UniXNU revision (pinned; bump deliberately)
+        required: false
+        default: "a885256c53a234d1e9c3cadeaf44299a1ef75fe8"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 300
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      UNIXNU_DEVICE: ${{ github.workspace }}/device
+      UNIXNU_UEFI: ${{ github.workspace }}/uefi-pipa
+    steps:
+      - name: Check out UniXNU
+        uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: ${{ inputs.kernel_sha || 'a885256c53a234d1e9c3cadeaf44299a1ef75fe8' }}
+          path: unixnu
+          persist-credentials: false
+
+      - name: Check out the device repository
+        uses: actions/checkout@v4
+        with:
+          repository: Tlrenhb/UniXNU-enuma
+          ref: ${{ github.ref_name }}
+          path: device
+
+      - name: Check out the same-SoC UEFI port (panic screen font)
+        uses: actions/checkout@v4
+        with:
+          repository: xVanTuring/uefi-pipa
+          ref: pipa
+          path: uefi-pipa
+          fetch-depth: 1
+
+      - name: Report the toolchain
+        run: |
+          set -euo pipefail
+          sw_vers
+          if [ -n "${DEVELOPER_DIR:-}" ] && [ -d "$DEVELOPER_DIR" ]; then
+            echo "DEVELOPER_DIR from the environment: $DEVELOPER_DIR"
+          else
+            newest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+            echo "DEVELOPER_DIR=$newest/Contents/Developer" >> "$GITHUB_ENV"
+            echo "picked $newest"
+          fi
+          xcodebuild -version
+          for t in git make clang cmake ninja unifdef python3 xcrun dtc; do printf '%-8s ' "$t"; command -v "$t" || echo MISSING; done
+
+      - name: Install host tools
+        run: |
+          set -euo pipefail
+          brew install llvm lld dtc || true
+          command -v unifdef >/dev/null || brew install unifdef
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+
+      - name: Select the device (schema 2 board, feeds and profiles)
+        working-directory: unixnu
+        run: ./unixnu defconfig "${{ inputs.defconfig }}"
+
+      - name: Fetch the SoC package, the OS profile sources and the modules
+        working-directory: unixnu
+        run: ./unixnu fetch
+
+      - name: Show where every module comes from
+        working-directory: unixnu
+        run: ./unixnu status --json | tee /tmp/status.json
+
+      - name: Assemble the build tree (patches apply arch -> soc -> os -> device)
+        working-directory: unixnu
+        run: ./unixnu tree
+
+      - name: Release check
+        working-directory: unixnu
+        run: ./unixnu release --check 2>&1 | tee /tmp/release-check.log
+
+      - name: Full release
+        if: inputs.full
+        working-directory: unixnu
+        run: ./unixnu release -j 4 2>&1 | tee /tmp/release.log
+
+      - name: Upload the logs and whatever the release produced
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: format2-logs
+          path: |
+            /tmp/status.json
+            /tmp/release-check.log
+            /tmp/release.log
+            unixnu/out/enuma/**/logs/**
+          if-no-files-found: warn

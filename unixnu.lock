@@ -25,7 +25,7 @@ commit = "a00a4cc36da2110578bcf3b8eeeeb93dcc7f4e11"
 commit = "c0e60fb5ecfc54cf379c261d3f9572cc22ded891"
 
 [source."sm8250"]
-commit = "31af31c6756fdd76c090eeb6e5ea82ccabc4fe0a"
+commit = "166235ec2480ff0992627b7aafa15c65ce6b4efa"
 
 [source."xnu"]
 commit = "d8b80295118ef25ac3a784134bcf95cd8e88109f"
