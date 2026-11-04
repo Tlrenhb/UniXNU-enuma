@@ -1,9 +1,6 @@
-# Device patch series, applied after arch/soc/os in the order listed (format 2).
+# Device-level patch series (applied last, after arch/soc/os).
 #
-# native-smp-secondary.patch: the machine configuration this port builds for is BCM2837, whose
-# board_config.h tops out at four CPUs, and kona reports the core number in MPIDR Affinity1 while
-# XNU's early start path reads Affinity0 when HAS_CLUSTER is off. Without this the eight-core tree
-# trips the topology asserts in ml_parse_cpu_topology (cold blocks at 1061/1099/1103/1174), which is
-# why every image so far carried cpus=1. Taken from the SM8550 SoC package, where the same machine
-# configuration is used; it is a device-level override here because our SoC package carries no patches.
-native-smp-secondary.patch
+# Empty on purpose: the eight-core fix now comes from the SoC package
+# (soc:patches/xnu/series -> native-smp-secondary.patch + native-smp-type-clusters.patch), which is
+# the point of migrating - the SoC package owns the machine-configuration patches and this repository
+# only keeps what is specific to enuma.
