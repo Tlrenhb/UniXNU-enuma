@@ -130,21 +130,14 @@ jobs:
       # logs/archive-09-build-platform-power.log ("no reference kernel yet ... build the kernel
       # again to link the bridge"). A no-op bridge means AMFI panics on hardware with
       # 'AMFI: No PMGR?' @ConfigurationSettings.cpp:235, so the second pass is not optional.
+      # The reference IOStorageFamily source is already in the tree: feeds.toml pins it and
+      # `unixnu fetch` put it at out/enuma/tree/refer/IOStorageFamily (revision e45fbe30), which is
+      # exactly what audit-storage-interface.py asserts.
+      #
       # The original-bindings route upstream uses for storage: compile the real IOStorageFamily
       # class, qualify its ABI against the prelinked kernel, then resolve every virtual slot of the
       # concrete UFS block class either to its own override or to the recorded original address.
       # Without this the block personality cannot link at all, which is where this port stopped.
-      - name: Fetch the reference IOStorageFamily source
-        if: inputs.storage_audit == 'true'
-        run: |
-          set -euo pipefail
-          mkdir -p unixnu/out/enuma/tree/refer
-          git clone --quiet https://github.com/apple-oss-distributions/IOStorageFamily.git \
-            unixnu/out/enuma/tree/refer/IOStorageFamily
-          cd unixnu/out/enuma/tree/refer/IOStorageFamily
-          git checkout --quiet e45fbe30a7879e0b16e26dddb78538f1b00e0bff
-          git rev-parse HEAD
-
       - name: Qualify the original storage ABI
         if: inputs.storage_audit == 'true'
         working-directory: unixnu/out/enuma/tree
