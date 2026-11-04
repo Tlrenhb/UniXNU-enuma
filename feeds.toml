@@ -1,0 +1,14 @@
+# SoC profile for enuma (SM8250-AC / Snapdragon 870).
+#
+# Format 2 keeps the SoC-level material out of the device repository. This is the only SM8250 SoC
+# package published for UniXNU (pinned, not a moving target): eight CPU affinities disabled by
+# default, GICv3 distributor/redistributor resources and the 19.2 MHz architectural timer, with its
+# provenance recorded in that repository's hardware-sources.json.
+#
+# What stays here: RAM and reserved regions, which CPUs are enabled, the peripheral wiring (UFS,
+# GCC, SMMU, PMIC, TLMM, display) and every board policy decision.
+[[source]]
+name = "sm8250"
+kind = "soc"
+git = "https://github.com/ht94911/UniXNU-sm8250-common"
+commit = "31af31c6756fdd76c090eeb6e5ea82ccabc4fe0a"
