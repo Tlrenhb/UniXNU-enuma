@@ -216,14 +216,21 @@ def main():
         errors.append(f"board.soc = {board.get('board', {}).get('soc')!r}; expected SM8250 or SM8250-AC")
 
     # 2. IPSW block -------------------------------------------------------------
+    # Format 2 takes the image from the OS profile (board.os_profile -> profiles/os/<name>/profile.toml),
+    # so a schema-2 device board has no [ipsw] block at all.
+    schema2 = board.get('schema_version') == 2
     ipsw = board.get('ipsw', {})
-    for key in ('url', 'product', 'version', 'build', 'device_class', 'chip_id', 'board_id'):
-        if key not in ipsw:
-            errors.append(f'[ipsw] has no {key}')
-    if ipsw.get('product') == 'iPad7,1' and (ipsw.get('build'), ipsw.get('version')) != ('21H461', '17.7.11'):
+    if schema2 and not ipsw:
+        notes.append('format 2: the IPSW identity comes from the OS profile, not from [ipsw]')
+        ipsw = {'product': 'from-profile'}
+    if not schema2:
+        for key in ('url', 'product', 'version', 'build', 'device_class', 'chip_id', 'board_id'):
+            if key not in ipsw:
+                errors.append(f'[ipsw] has no {key}')
+    if not schema2 and ipsw.get('product') == 'iPad7,1' and (ipsw.get('build'), ipsw.get('version')) != ('21H461', '17.7.11'):
         errors.append('iPad7,1 identity must match build 21H461 / 17.7.11 (same image as sheng/pipa/umi)')
     pins = ipsw.get('sha256', {})
-    if len(pins) < 6:
+    if not schema2 and len(pins) < 6:
         todos.append(f'[ipsw.sha256] has {len(pins)} pins; umi pins 6 members of this same IPSW '
                      '(kernelcache/DeviceTree/two dmg/two trustcache)')
 
@@ -233,23 +240,37 @@ def main():
         errors.append('[kernel] archives is missing or empty: the kernel step raises '
                       '"no builder makes it, supply the archive" for every unbuilt *_ARCHIVE')
     else:
+        schema2 = board.get('schema_version') == 2
         for index, entry in enumerate(archives):
             if not isinstance(entry, str) or not entry.strip():
                 errors.append(f'[kernel] archives[{index}] is not a non-empty string')
                 continue
             script = entry.split()[0]
             if not script.endswith(('.py', '.sh')):
-                errors.append(f'[kernel] archives[{index}] = {entry!r}: first token should be a builder script')
+                if schema2 and entry.startswith('component:'):
+                    # Format 2 resolves component ids through components.toml; the first token is not
+                    # a builder script by design.
+                    notes.append(f'[kernel] archives[{index}] = {entry!r}: component id resolved by the '
+                                 'component catalog')
+                else:
+                    errors.append(f'[kernel] archives[{index}] = {entry!r}: first token should be a builder script')
             if args.tree:
                 candidates = [args.tree / 'scripts' / script, args.tree / script]
                 if not any(c.exists() for c in candidates):
                     errors.append(f'[kernel] archives[{index}] = {entry!r}: no builder in {args.tree} '
                                   f'(looked for scripts/{script}); pin the revision that ships it')
-        # expected-set gate: a deleted entry must be a hard error, not a silent pass
+        # expected-set gate: a deleted entry must be a hard error, not a silent pass.
+        # Format 2 builds the archive set from arch/soc/os/device profiles plus this list, so the
+        # format-1 expectation of exactly these nine builders no longer applies; report the delta as a
+        # note instead of an error.
         present = {entry.strip() for entry in archives if isinstance(entry, str)}
         for required in ARCHIVES_REQUIRED:
             if required not in present:
-                errors.append(f'Missing archive: {required} (no builder makes it, supply the archive)')
+                if schema2:
+                    notes.append(f'format 2: {required!r} comes from the profile chain, not from the '
+                                 'device archives list')
+                else:
+                    errors.append(f'Missing archive: {required} (no builder makes it, supply the archive)')
         extra = sorted(present - set(ARCHIVES_REQUIRED))
         if extra:
             notes.append(f'[kernel] archives has {len(extra)} extra entr(ies) beyond the nine checked: '
@@ -331,9 +352,9 @@ def main():
 
     # 6. boot image -------------------------------------------------------------
     image = board.get('bootimg', {}).get('image', {})
-    if not image:
+    if not image and not schema2:
         errors.append('[bootimg.image] is missing: header_version decides whether stock ABL accepts the image')
-    else:
+    elif image:
         version = image.get('header_version')
         if version not in (0, 1, 2):
             errors.append(f'[bootimg.image] header_version = {version!r}; expected 0, 1 or 2')
@@ -363,7 +384,10 @@ def main():
 
     # 7. ADT contract (mirrors make-enuma-adt.py assertions) --------------------
     adt = board.get('payload', {}).get('adt', {})
-    if adt.get('psci_method') not in ('smc', 'hvc'):
+    if schema2 and 'psci_method' not in adt:
+        # Format 2 generates the ADT from [adt.*] plus the board values; psci_method is not a key there.
+        pass
+    elif adt.get('psci_method') not in ('smc', 'hvc'):
         errors.append(f"[payload.adt] psci_method = {adt.get('psci_method')!r}; expected 'smc' or 'hvc'")
     elif adt.get('psci_method') != 'smc':
         notes.append('psci_method is not smc; umi (same SoC) uses smc')
