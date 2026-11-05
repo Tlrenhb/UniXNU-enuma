@@ -149,6 +149,15 @@ jobs:
       # eleven IOBlockStorageDevice symbols live in the prelinked collection and are never exported to
       # the kernel link, so every virtual slot has to be resolved either to the driver's own override or
       # to the recorded original address. The audit needs the object record from the kernel build above.
+      - name: Emit the prelink candidate the storage audit reads
+        if: inputs.storage_audit
+        working-directory: unixnu
+        run: |
+          set -euo pipefail
+          tree=$(ls -d out/enuma/*/*/tree | head -1)
+          test -n "$tree" || { echo "::error::no assembled tree"; exit 1; }
+          "$tree/scripts/make-prelink-candidate.sh" "$tree"
+
       - name: Qualify the original storage ABI
         if: inputs.storage_audit
         working-directory: unixnu
