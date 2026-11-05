@@ -42,20 +42,27 @@ import subprocess
 
 
 def macho_sections(path):
-    """Return {segment: {va, size}} for the segments we need and the symbol table."""
+    """Return (data, segments, symbols).
+
+    A prelinked kernel is a collection: every embedded image contributes its own __TEXT_EXEC and
+    __DATA_CONST, so the segments are a list, not a dictionary keyed by name - keeping only the first one
+    per name hid the kext images and made the getter scan find nothing inside IOStorageFamily.
+    """
     data = Path(path).read_bytes()
     magic, cputype, _, filetype, ncmds, sizeofcmds, _, _ = struct.unpack_from('<8I', data, 0)
     if magic != 0xFEEDFACF:
         raise SystemExit('not a 64-bit Mach-O')
     offset = 32
-    sections, symbols = {}, {}
+    segments, symbols = [], {}
     symtab = None
     for _ in range(ncmds):
         cmd, size = struct.unpack_from('<2I', data, offset)
         if cmd == 0x19:  # LC_SEGMENT_64
-            name = data[offset + 8:offset + 24].rstrip(b'\0').decode()
-            va, vsize = struct.unpack_from('<QQ', data, offset + 24)
-            sections.setdefault(name, {'va': va, 'size': vsize})
+            name = data[offset + 8:offset + 24].rstrip(b'\0').decode(errors='replace')
+            va, vsize, fileoff, filesize = struct.unpack_from('<QQQQ', data, offset + 24)
+            maxprot, initprot = struct.unpack_from('<2I', data, offset + 56)
+            segments.append({'name': name, 'va': va, 'size': vsize, 'fileoff': fileoff,
+                             'filesize': filesize, 'exec': bool(initprot & 4)})
         elif cmd == 0x2:  # LC_SYMTAB
             symtab = struct.unpack_from('<4I', data, offset + 8)
         offset += size
@@ -64,17 +71,16 @@ def macho_sections(path):
         for index in range(nsyms):
             strx, ntype, _, _, value = struct.unpack_from('<IBBHQ', data, symoff + index * 16)
             end = data.index(b'\0', stroff + strx)
-            symbols[data[stroff + strx:end].decode()] = value
-    return data, sections, symbols
+            symbols[data[stroff + strx:end].decode(errors='replace')] = value
+    return data, segments, symbols
 
 
-def read_at(data, sections, address, count):
-    for segment in sections.values():
-        if segment['va'] <= address < segment['va'] + segment['size']:
-            start = address - segment['va']
-            # file offset equals the segment offset for the __TEXT-family segments of a prelinked kernel
+def read_at(data, segments, address, count):
+    for segment in segments:
+        if segment['va'] <= address and address + count <= segment['va'] + segment['size']:
+            start = segment['fileoff'] + (address - segment['va'])
             return data[start:start + count]
-    raise SystemExit(f'address {address:#x} is not inside any segment')
+    raise SystemExit(f'address {address:#x} is not inside any mapped segment')
 
 
 def adrp_add(getter, base_page):
@@ -98,7 +104,7 @@ def main():
     parser.add_argument('--out', type=Path, help='where to write gdb-stop.json')
     args = parser.parse_args()
 
-    data, sections, symbols = macho_sections(args.candidate)
+    data, segments, symbols = macho_sections(args.candidate)
     digest = hashlib.sha256(Path(args.candidate).read_bytes()).hexdigest()
     service_meta = symbols.get('__ZN9IOService10gMetaClassE')
     if not service_meta:
@@ -108,12 +114,15 @@ def main():
     # from the IOStorageFamily extent recorded by the audit; the symbol is not exported, so search the text
     # for a getter that resolves to a plausible metaclass inside the kext's __DATA_CONST.
     getters = []
-    text = sections.get('__TEXT_EXEC') or sections.get('__TEXT')
-    for address in range(text['va'], text['va'] + text['size'] - 12, 4):
-        chunk = read_at(data, sections, address, 12)
-        a, add, ret = struct.unpack('<3I', chunk)
-        if a & 0x9f00001f == 0x90000000 and add & 0xffc003ff == 0x91000000 and ret == 0xd65f03c0:
-            getters.append((address, adrp_add(chunk, address)))
+    for text in [s for s in segments if s['name'] == '__TEXT_EXEC' and s['size']]:
+        for address in range(text['va'], text['va'] + text['size'] - 12, 4):
+            try:
+                chunk = read_at(data, segments, address, 12)
+            except SystemExit:
+                continue
+            a, add, ret = struct.unpack('<3I', chunk)
+            if a & 0x9f00001f == 0x90000000 and add & 0xffc003ff == 0x91000000 and ret == 0xd65f03c0:
+                getters.append((address, adrp_add(chunk, address)))
     if args.plan:
         plan = json.loads(args.plan.read_text())
         extents = [e for e in plan.get('extents', [])
