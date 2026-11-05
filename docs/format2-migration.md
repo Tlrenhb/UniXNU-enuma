@@ -52,6 +52,24 @@ patch_order = patches.plan(ctx, modules) if ctx.schema_version == 2 else []
 5. 之后才把 UFS/存储挪到格式 2 轨道：`component:ShengUfs` + storage ABI 审计（原来的
    `storage_audit` 手工 CI 可以退休）。
 
+## 为什么公有流水线不跑 `unixnu release`
+
+`release` 的步骤是 `(kernel, package, firmware, payload)`。其中 **firmware 步骤需要两样本仓不携带的东西**：
+
+1. `enumaPkg` overlay（`Tlrenhb/uefi-enuma`）；
+2. 小米官方 fastboot ROM 里抽出来的 vendor drop（`xbl.elf` → `Binaries/enuma/`）。
+
+这两样是专有材料，只走私有流水线。所以公有仓的格式 2 job 用显式步骤证明**真正有风险的那段**：
+
+```
+build kernel   （第一遍：产出编译记录）
+build kernel   （第二遍：PMGR 桥对着真内核链接）
+断言 _sheng_pmgr_run 指令数 ≥ 50（空桩不许过）
+build payload  （ADT 由板级 DTS 生成）
+```
+
+boot 镜像仍在有固件的地方打（私有流水线或本地 `scripts/ufs-round.sh`）。
+
 ## 切换清单（main → 格式 2）
 
 `scripts/switch-to-format2.sh` 把这一步做成一条命令，并且**只在格式 2 流水线有绿色 run 时才肯执行**：
