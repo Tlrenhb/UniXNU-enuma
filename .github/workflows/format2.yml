@@ -166,4 +166,9 @@ jobs:
             /tmp/release-check.log
             /tmp/release.log
             unixnu/out/enuma/**/logs/**
+            # The products, so a boot image can be packed locally against the firmware volume from the
+            # private pipeline (the only place that has the vendor drop). Without these the run proves the
+            # pipeline but leaves nothing to boot.
+            unixnu/out/enuma/*/*/kernel/kernel.macho
+            unixnu/out/enuma/*/*/payload/payload.img
           if-no-files-found: warn
