@@ -25,6 +25,18 @@ patch_order = patches.plan(ctx, modules) if ctx.schema_version == 2 else []
 | `unixnu status --json` | ✅ 四个 profile 全部解析到：arch=arm64、soc=sm8250-common、os=ipados-17.7.11-21H461、device=本仓 |
 | `unixnu defconfig enuma_ufs_defconfig` | ✅ arch+soc+device 三段 config 合并成 `.config` |
 
+## 本地已跑通（不需要 CI，用钉住的 UniXNU + 本机的 fd/payload 输入）
+
+| 步骤 | 结果 |
+|---|---|
+| dtc 编译 `dts/enuma.dts`（`-i soc:dts`） | ✅ 2,793 B dtb |
+| 共享生成器产出 ADT | ✅ 13,336 B，含 arm-io(intc/ufshc/ufsphy)、cpus、psci、chosen(dram/unique-chip-id/root-matching)、product、buttons |
+| 信托缓存 bundle（`make-trust-bundle-from-members.py`） | ✅ 61,356 B，sha256 `7416ca4f…` **与板级白名单一致** |
+| `unixnu build payload`（含 ADT + panic 屏补丁） | ✅ `payload.img` 64 MiB |
+| `unixnu bootimg`（fd + 合并树 dtb） | ✅ `boot.img` 68,661,248 B，`ANDROID!` 魔数、ramdisk == payload |
+
+也就是说格式 2 的**除内核编译之外**整条链都验证过了；只剩 macOS runner 上的 `build kernel`。
+
 ## 待办（按顺序）
 
 1. **`scripts/check-enuma.py` 适配格式 2**：`archives` 里现在混有 `component:<ID>`，检查器要有对应规则；
