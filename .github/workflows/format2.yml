@@ -158,6 +158,12 @@ jobs:
           test -n "$tree" || { echo "::error::no assembled tree"; exit 1; }
           "$tree/scripts/make-prelink-candidate.sh" "$tree"
 
+      # The audit does not only read static data: at the end it requires a live observation captured on
+      # hardware (build/darwinboot-storage-native-metadata/gdb-stop.json - metaclass memory plus
+      # TCR_EL1/SCTLR_EL1/TTBR0/1 from a GDB stop inside the booted prelinked kernel). That is how upstream
+      # qualifies the original storage ABI, and it cannot be produced in CI. Without the record the audit
+      # stops with a FileNotFoundError, so this step reports the prerequisite instead of pretending the
+      # pipeline is broken.
       - name: Qualify the original storage ABI
         if: inputs.storage_audit
         working-directory: unixnu
@@ -166,11 +172,20 @@ jobs:
           tree=$(ls -d out/enuma/*/*/tree | head -1)
           test -n "$tree" || { echo "::error::no assembled tree"; exit 1; }
           cd "$tree"
+          live=build/darwinboot-storage-native-metadata/gdb-stop.json
+          if [ ! -f "$live" ]; then
+            echo "::notice title=storage bindings are hardware-gated::$live is missing."
+            echo "It is the live ABI observation (metaclass memory + TCR_EL1/SCTLR_EL1/TTBR0/1 from a GDB"
+            echo "stop in the booted prelinked kernel) that the audit requires before it will qualify the"
+            echo "original IOBlockStorageDevice. Capture it on the tablet, commit it under build/ of the"
+            echo "device repository, and re-run with storage_audit=true. UFS stays off until then."
+            exit 0
+          fi
           python3 scripts/audit-storage-interface.py
           python3 -c "import json;d=json.load(open('build/storage-abi/interface-audit.json'));print('slots',d['method_slots'],'vtable',hex(d['vtable']),'live4k',d['live_native_4k'])"
 
       - name: Build the UFS original bindings
-        if: inputs.storage_audit
+        if: inputs.storage_audit && hashFiles('unixnu/out/enuma/*/*/tree/build/storage-abi/interface-audit.json') != ''
         working-directory: unixnu
         run: |
           set -euo pipefail

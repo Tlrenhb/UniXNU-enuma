@@ -127,6 +127,25 @@ build-arm-driver.py: error: argument component: invalid choice: 'SoftwareAES'
 那份副本原本只为了编 `EnumaUfsProbe.cpp`（格式 1 的只读探针），格式 2 用不上，所以在 `format2` 分支删掉，
 让主仓的构建器接管。`build-link-stubs.py` 与 `build-platform-power.py` 仍保留（主仓没有）。
 
+## 阶段 2 的存储绑定是**硬件门禁**，不是代码问题
+
+`scripts/audit-storage-interface.py` 末尾要求一份**真机观测**：
+
+```
+build/darwinboot-storage-native-metadata/gdb-stop.json
+  kernel_sha256            必须等于 prelink 候选的 sha256
+  memory["<meta>:0x50"]    原始 IOService/IOBlockStorageDevice 元类内存
+  system_registers         TCR_EL1 / SCTLR_EL1 / TTBR0_EL1 / TTBR1_EL1
+  bounded_timeout_interrupted = false
+```
+
+这是上游"合格存储 ABI"的定义方式：在启动起来的 prelinked 内核里用 GDB 停下，读元类内存和页表寄存器。
+**CI 无法产出它**，所以：
+
+- 在拿到这份记录之前，`storage_audit=true` 的 run 会打印一条 notice（说明需要什么）并跳过；
+- `component:ShengUfs` 进 archives、`CONFIG_XNU_NATIVE_UFS=y` 都等这份记录；
+- 记录一旦有（真机 GDB 会话 + 提交到设备仓 `build/`），审计 → `build-enuma-ufs-bindings.py` → 归档 → 打开 UFS，一条链就通了。
+
 ## 迁移踩过的坑（每条都对应一次 CI 失败）
 
 | 现象 | 根因 | 处置 |
