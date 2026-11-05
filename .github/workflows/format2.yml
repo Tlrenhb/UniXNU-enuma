@@ -100,7 +100,13 @@ jobs:
           set -euo pipefail
           ./unixnu release --check 2>&1 | tee /tmp/release-check.log
 
-      - name: Full release
+      # Two release passes, on purpose. build-platform-power.py compiles the board's original-PMGR
+      # bridge against a kernel that already exists; on a fresh tree it links a no-op sheng_pmgr_run and
+      # says so ("no reference kernel yet ... build the kernel again"). A no-op bridge makes AMFI panic
+      # on hardware with 'AMFI: No PMGR?', so the second pass is not optional - the same lesson the
+      # format-1 pipeline learned the hard way. The second pass is incremental: the XNU objects and the
+      # compile records are already in the output tree.
+      - name: Release pass 1 (compile records, first kernel)
         if: inputs.full
         working-directory: unixnu
         run: |
@@ -108,6 +114,28 @@ jobs:
           # release was reported as a green step (it happened on 2026-11-05).
           set -euo pipefail
           ./unixnu release -j 4 2>&1 | tee /tmp/release.log
+
+      - name: Release pass 2 (the PMGR bridge links against the real kernel)
+        if: inputs.full
+        working-directory: unixnu
+        run: |
+          set -euo pipefail
+          ./unixnu release -j 4 2>&1 | tee -a /tmp/release.log
+
+      - name: Assert the PMGR bridge is not a no-op stub
+        if: inputs.full
+        working-directory: unixnu
+        run: |
+          set -euo pipefail
+          kernel=$(ls out/enuma/*/*/kernel/kernel.macho | head -1)
+          test -n "$kernel" || { echo "::error::no kernel.macho produced"; exit 1; }
+          count=$(llvm-objdump -d --disassemble-symbols=_sheng_pmgr_run "$kernel" | grep -c '^fffffff' || true)
+          echo "$kernel: sheng_pmgr_run has $count instructions"
+          if [ "$count" -lt 50 ]; then
+            echo "::error::the PMGR bridge is still a stub ($count instructions): a second release pass did not link it"
+            exit 1
+          fi
+          llvm-nm "$kernel" | grep -c NativeUfs || true
 
       - name: Upload the logs and whatever the release produced
         if: always()
