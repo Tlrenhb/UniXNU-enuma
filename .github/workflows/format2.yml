@@ -96,12 +96,18 @@ jobs:
 
       - name: Release check
         working-directory: unixnu
-        run: ./unixnu release --check 2>&1 | tee /tmp/release-check.log
+        run: |
+          set -euo pipefail
+          ./unixnu release --check 2>&1 | tee /tmp/release-check.log
 
       - name: Full release
         if: inputs.full
         working-directory: unixnu
-        run: ./unixnu release -j 4 2>&1 | tee /tmp/release.log
+        run: |
+          # pipefail matters: without it `tee` returns 0 and a failed patch application inside the
+          # release was reported as a green step (it happened on 2026-11-05).
+          set -euo pipefail
+          ./unixnu release -j 4 2>&1 | tee /tmp/release.log
 
       - name: Upload the logs and whatever the release produced
         if: always()

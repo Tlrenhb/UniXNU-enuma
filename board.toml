@@ -33,7 +33,11 @@ lba_bytes = 4096                     # 实测 blockdev --getss
 defconfig = "enuma_defconfig"
 # 顺序即应用顺序：arch → soc → os → device。
 config_fragments = ["arch:configs/common.config", "soc:configs/sm8250.config", "os:configs/ipados.config"]
-patch_series = ["arch:patches/xnu/series", "soc:patches/xnu/series", "os:patches/xnu/series", "device:patches/xnu/series"]
+# os:patches/xnu/series 暂时不进链条：它的 zzz-boot-progress.patch 在当前的 arch 系列之后
+# 打不上（`bsd/kern/bsd_init.c:773 patch does not apply`，2026-11-05 实测）。那三件里真正需要的
+# 两件（XnuPrelink 的 security-init / sparse-index）由设备系列显式带上，boot-progress 只是
+# 调试插桩，等上游修好或我们自己 rebase 之后再补。
+patch_series = ["arch:patches/xnu/series", "soc:patches/xnu/series", "device:patches/xnu/series"]
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",

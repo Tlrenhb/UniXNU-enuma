@@ -1,6 +1,7 @@
-# Device-level patch series (applied last, after arch/soc/os).
+# Device-level patch series (applied last, after arch and soc).
 #
-# Empty on purpose: the eight-core fix now comes from the SoC package
-# (soc:patches/xnu/series -> native-smp-secondary.patch + native-smp-type-clusters.patch), which is
-# the point of migrating - the SoC package owns the machine-configuration patches and this repository
-# only keeps what is specific to enuma.
+# The two prelink patches are what the ipados-17.7.11 OS profile needs from its series; they are named
+# here because that profile's own series also carries zzz-boot-progress.patch, which no longer applies
+# on top of the current arch series (bsd_init.c:773). Boot-progress is instrumentation, so it waits.
+component:XnuPrelink/patches/xnu-10063.141.1-security-init.patch
+component:XnuPrelink/patches/xnu-10063.141.1-sparse-index.patch
