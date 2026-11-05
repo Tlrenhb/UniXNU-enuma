@@ -40,6 +40,14 @@ patch_order = patches.plan(ctx, modules) if ctx.schema_version == 2 else []
 5. 之后才把 UFS/存储挪到格式 2 轨道：`component:ShengUfs` + storage ABI 审计（原来的
    `storage_audit` 手工 CI 可以退休）。
 
+## 切换清单（main → 格式 2）
+
+`scripts/switch-to-format2.sh` 把这一步做成一条命令，并且**只在格式 2 流水线有绿色 run 时才肯执行**：
+
+1. 检查最近 8 个 run 里是否存在 `format2`+`success`；
+2. 拒绝脏工作区；
+3. `git merge --ff-only format2` 到 `main` 并推送。
+
 ## 迁移后可以退役的东西
 
 - `drivers/ufs/`（vendor 的 ShengUfs 拷贝 + 手写探针）→ 由 `component:ShengUfs` 取代；
