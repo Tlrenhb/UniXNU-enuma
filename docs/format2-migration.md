@@ -99,6 +99,19 @@ boot 镜像仍在有固件的地方打（私有流水线或本地 `scripts/ufs-r
 
 私有固件流水线的格式 2 迁移作为后续任务（它需要 `[firmware]` + overlay + vendor drop 的路径重新对齐）。
 
+### 已退役：本仓的 `scripts/build-arm-driver.py`
+
+格式 2 里 `component:SoftwareAES` 会调 `build-arm-driver.py SoftwareAES`，而 UniXNU 主仓那份通过
+`components.toml` 的 catalog 把 `SoftwareAES` 映射回 legacy 名 `NativeAES`。我们 vendored 的副本没有这个映射
+（它的 `--component` 只认 `NativeAES` 等旧名），于是第一次 pass 报：
+
+```
+build-arm-driver.py: error: argument component: invalid choice: 'SoftwareAES'
+```
+
+那份副本原本只为了编 `EnumaUfsProbe.cpp`（格式 1 的只读探针），格式 2 用不上，所以在 `format2` 分支删掉，
+让主仓的构建器接管。`build-link-stubs.py` 与 `build-platform-power.py` 仍保留（主仓没有）。
+
 ## 迁移后可以退役的东西
 
 - `drivers/ufs/`（vendor 的 ShengUfs 拷贝 + 手写探针）→ 由 `component:ShengUfs` 取代；
