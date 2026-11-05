@@ -100,27 +100,28 @@ jobs:
           set -euo pipefail
           ./unixnu release --check 2>&1 | tee /tmp/release-check.log
 
-      # Two release passes, on purpose. build-platform-power.py compiles the board's original-PMGR
-      # bridge against a kernel that already exists; on a fresh tree it links a no-op sheng_pmgr_run and
-      # says so ("no reference kernel yet ... build the kernel again"). A no-op bridge makes AMFI panic
-      # on hardware with 'AMFI: No PMGR?', so the second pass is not optional - the same lesson the
-      # format-1 pipeline learned the hard way. The second pass is incremental: the XNU objects and the
-      # compile records are already in the output tree.
-      - name: Release pass 1 (compile records, first kernel)
+      # The full release is assembled from explicit steps rather than `unixnu release`, for one
+      # concrete reason: release's step list is (kernel, package, firmware, payload), and the firmware
+      # step needs the Xiaomi vendor drop (xbl.elf from the official fastboot ROM) plus our enumaPkg
+      # overlay. Those are proprietary and live in the private pipeline, so the public format-2 job
+      # proves the kernel/payload/boot-image path and the firmware keeps its own workflow.
+      #
+      # The kernel is built twice on purpose: build-platform-power.py compiles the original-PMGR bridge
+      # against a kernel that already exists, so a single pass links a no-op sheng_pmgr_run and says so.
+      # A no-op bridge panics on hardware with 'AMFI: No PMGR?'. The second pass is incremental.
+      - name: Kernel pass 1 (compile records, first kernel)
         if: inputs.full
         working-directory: unixnu
         run: |
-          # pipefail matters: without it `tee` returns 0 and a failed patch application inside the
-          # release was reported as a green step (it happened on 2026-11-05).
           set -euo pipefail
-          ./unixnu release -j 4 2>&1 | tee /tmp/release.log
+          ./unixnu build kernel 2>&1 | tee /tmp/kernel-1.log
 
-      - name: Release pass 2 (the PMGR bridge links against the real kernel)
+      - name: Kernel pass 2 (the PMGR bridge links against the real kernel)
         if: inputs.full
         working-directory: unixnu
         run: |
           set -euo pipefail
-          ./unixnu release -j 4 2>&1 | tee -a /tmp/release.log
+          ./unixnu build kernel 2>&1 | tee /tmp/kernel-2.log
 
       - name: Assert the PMGR bridge is not a no-op stub
         if: inputs.full
@@ -130,12 +131,25 @@ jobs:
           kernel=$(ls out/enuma/*/*/kernel/kernel.macho | head -1)
           test -n "$kernel" || { echo "::error::no kernel.macho produced"; exit 1; }
           count=$(llvm-objdump -d --disassemble-symbols=_sheng_pmgr_run "$kernel" | grep -c '^fffffff' || true)
-          echo "$kernel: sheng_pmgr_run has $count instructions"
+          echo "$kernel: $(stat -f%z "$kernel" 2>/dev/null || stat -c%s "$kernel") bytes, sheng_pmgr_run has $count instructions"
           if [ "$count" -lt 50 ]; then
-            echo "::error::the PMGR bridge is still a stub ($count instructions): a second release pass did not link it"
+            echo "::error::the PMGR bridge is still a stub ($count instructions)"
             exit 1
           fi
           llvm-nm "$kernel" | grep -c NativeUfs || true
+          shasum -a 256 "$kernel"
+
+      - name: Payload (ADT from the board DTS)
+        if: inputs.full
+        working-directory: unixnu
+        run: |
+          set -euo pipefail
+          ./unixnu build payload 2>&1 | tee /tmp/payload.log
+
+      # The boot image needs the firmware volume, and that comes out of the private pipeline: the
+      # enumaPkg overlay plus the Xiaomi vendor drop (xbl.elf) never enter this repository. So the public
+      # job stops at the payload - the ADT, the panic-screen patch and the boot entries are all in it -
+      # and the boot image is packed where the firmware is (or locally, see scripts/ufs-round.sh).
 
       - name: Upload the logs and whatever the release produced
         if: always()
