@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+//
+// Xiaomi Pad 5 Pro 5G (enuma, SM8250-AC / Snapdragon 870) - UniXNU format 2 device tree.
+//
+// Format 2 splits the hardware description: the SoC package (feeds.toml -> UniXNU-sm8250-common)
+// supplies /cpus, /psci, GICv3, UFS, GPU and the QUP wrapper, each node carrying the `unixnu,adt-name`
+// marker that the shared ADT generator exports into ADT /arm-io. This file only adds what belongs to
+// the board: the DRAM range, the identity strings, and which of those nodes are enabled.
+//
+// The board values below come from the stock device tree of this tablet (the merged tree at
+// out/astide/enuma.dtb, sha256 296c7e91..., kept under dts/reference/ for provenance):
+//   - DRAM starts at 0x80000000 and the highest System RAM bank ends at 0x2_80000000,
+//     i.e. 8 GiB. The ADT generator requires exactly one contiguous range and rejects any
+//     [payload] dram_size that disagrees with it.
+//   - PSCI method is smc (kona.dtsi).
+//   - UFS host 0x1d84000 + PHY 0x1d87000 (docs/ufs-hardware.md).
+/dts-v1/;
+
+/include/ "sm8250.dtsi"
+
+/ {
+    model = "Xiaomi Pad 5 Pro 5G";
+    compatible = "xiaomi,enuma", "qcom,sm8250";
+
+    // One contiguous range: the shared generator refuses anything else, and XNU's handoff carries a
+    // single dram-base/dram-size pair.
+    memory@80000000 {
+        device_type = "memory";
+        reg = <0x0 0x80000000 0x2 0x0>;
+    };
+
+    chosen {
+        // Board identity read by the OS profile matching and by our own boot records.
+        unixnu,board = "enuma";
+    };
+
+    soc {
+        // Stage 2: the storage path is what this port is working on, so the controller and its PHY are
+        // enabled; the GPU side stays off until a GPU component is selected.
+        ufs: ufshc@1d84000 {
+            status = "okay";
+        };
+
+        ufsphy: phy@1d87000 {
+            status = "okay";
+        };
+    };
+};
