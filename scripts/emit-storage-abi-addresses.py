@@ -39,115 +39,81 @@ import re
 import struct
 from pathlib import Path
 import subprocess
+import sys
 
 
-def macho_sections(path):
-    """Return (data, segments, symbols).
-
-    A prelinked kernel is a collection: every embedded image contributes its own __TEXT_EXEC and
-    __DATA_CONST, so the segments are a list, not a dictionary keyed by name - keeping only the first one
-    per name hid the kext images and made the getter scan find nothing inside IOStorageFamily.
-    """
-    data = Path(path).read_bytes()
-    magic, cputype, _, filetype, ncmds, sizeofcmds, _, _ = struct.unpack_from('<8I', data, 0)
-    if magic != 0xFEEDFACF:
-        raise SystemExit('not a 64-bit Mach-O')
-    offset = 32
-    segments, symbols = [], {}
-    symtab = None
-    for _ in range(ncmds):
-        cmd, size = struct.unpack_from('<2I', data, offset)
-        if cmd == 0x19:  # LC_SEGMENT_64
-            name = data[offset + 8:offset + 24].rstrip(b'\0').decode(errors='replace')
-            va, vsize, fileoff, filesize = struct.unpack_from('<QQQQ', data, offset + 24)
-            maxprot, initprot = struct.unpack_from('<2I', data, offset + 56)
-            segments.append({'name': name, 'va': va, 'size': vsize, 'fileoff': fileoff,
-                             'filesize': filesize, 'exec': bool(initprot & 4)})
-        elif cmd == 0x2:  # LC_SYMTAB
-            symtab = struct.unpack_from('<4I', data, offset + 8)
-        offset += size
-    if symtab:
-        symoff, nsyms, stroff, _ = symtab
-        for index in range(nsyms):
-            strx, ntype, _, _, value = struct.unpack_from('<IBBHQ', data, symoff + index * 16)
-            end = data.index(b'\0', stroff + strx)
-            symbols[data[stroff + strx:end].decode(errors='replace')] = value
-    return data, segments, symbols
+def load_kit(tree):
+    """The prelink kit parses this file format (a prelinked collection); do not re-implement it."""
+    sys.path.insert(0, str(Path(tree) / 'kits/XnuPrelink'))
+    import native_prelink
+    return native_prelink
 
 
-def read_at(data, segments, address, count):
-    for segment in segments:
-        if segment['va'] <= address and address + count <= segment['va'] + segment['size']:
-            start = segment['fileoff'] + (address - segment['va'])
-            return data[start:start + count]
-    raise SystemExit(f'address {address:#x} is not inside any mapped segment')
+def derive(args, np):
+    kernel = Path(args.candidate).read_bytes()
+    plan = json.loads(Path(args.plan).read_text())
+    image = np.macho(kernel)
+    exports = np.exports(kernel, image)
+    by_name = {name: va for va, names in exports.items() for name in names}
 
+    def read(va, length):
+        at = np.backed_offset(image['segments'], va, length, len(kernel))
+        return kernel[at:at + length]
 
-def adrp_add(getter, base_page):
-    a, add, ret = struct.unpack('<3I', getter[:12])
+    extents = [e for e in plan['extents'] if e['module'] == 'com.apple.iokit.IOStorageFamily']
+    const = next(e for e in extents if e['segment'] == '__DATA_CONST')
+    # The vtable is located exactly the way audit-storage-interface.py locates it: scan the kext's
+    # __DATA_CONST for 16 zero bytes followed by the method pointers that the kernel also exports.
+    blob = read(const['va'], const['size'])
+    methods = [m['reference_name'] for m in plan['methods']]
+    found = []
+    for at in range(0, len(blob) - (len(methods) + 2) * 8 + 1, 8):
+        if blob[at:at + 16] != bytes(16):
+            continue
+        pointers = struct.unpack_from('<' + 'Q' * len(methods), blob, at + 16)
+        if all(pointers[i] == by_name[name] for i, name in enumerate(methods) if name in by_name):
+            found.append((const['va'] + at, pointers))
+    if len(found) != 1:
+        raise SystemExit(f'cannot uniquely identify the storage vtable (found {len(found)})')
+    table, pointers = found[0]
+    getter = pointers[7]
+    a, add, ret = struct.unpack('<3I', read(getter, 12))
     if a & 0x9f00001f != 0x90000000 or add & 0xffc003ff != 0x91000000 or ret != 0xd65f03c0:
-        raise SystemExit('the getter is not the expected ADRP/ADD/RET triple')
+        raise SystemExit('the slot-7 getter is not the expected ADRP/ADD/RET triple')
     immediate = ((a >> 5 & 0x7ffff) << 2) | (a >> 29 & 3)
     if immediate & 0x100000:
         immediate -= 0x200000
-    return (base_page & ~4095) + immediate * 4096 + (add >> 10 & 4095)
+    meta = (getter & ~4095) + immediate * 4096 + (add >> 10 & 4095)
+    service_meta = by_name['__ZN9IOService10gMetaClassE']
+    return kernel, meta, service_meta, table, getter
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--candidate', required=True, type=Path,
                         help='prelink candidate (build/xnu-prelink/native-apfs-load-positive.macho)')
-    parser.add_argument('--plan', type=Path,
-                        help='the candidate .json plan; its IOStorageFamily __DATA_CONST extent narrows the '
-                             'getter list to the one metaclass that lives in that kext')
+    parser.add_argument('--plan', required=True, type=Path,
+                        help='the candidate .json plan written next to it by emit_prelink.py')
+    parser.add_argument('--tree', type=Path, default=Path('.'),
+                        help='assembled tree root (for kits/XnuPrelink)')
     parser.add_argument('--gdb-log', type=Path, help='GDB session log to parse into the record')
     parser.add_argument('--out', type=Path, help='where to write gdb-stop.json')
     args = parser.parse_args()
 
-    data, segments, symbols = macho_sections(args.candidate)
-    digest = hashlib.sha256(Path(args.candidate).read_bytes()).hexdigest()
-    service_meta = symbols.get('__ZN9IOService10gMetaClassE')
-    if not service_meta:
-        raise SystemExit('IOService::gMetaClass is not in this candidate; it must be the prelinked kernel')
-
-    # The vtable slot 7 getter is the one that returns IOBlockStorageDevice::gMetaClass. Its address comes
-    # from the IOStorageFamily extent recorded by the audit; the symbol is not exported, so search the text
-    # for a getter that resolves to a plausible metaclass inside the kext's __DATA_CONST.
-    getters = []
-    for text in [s for s in segments if s['name'] == '__TEXT_EXEC' and s['size']]:
-        for address in range(text['va'], text['va'] + text['size'] - 12, 4):
-            try:
-                chunk = read_at(data, segments, address, 12)
-            except SystemExit:
-                continue
-            a, add, ret = struct.unpack('<3I', chunk)
-            if a & 0x9f00001f == 0x90000000 and add & 0xffc003ff == 0x91000000 and ret == 0xd65f03c0:
-                getters.append((address, adrp_add(chunk, address)))
-    if args.plan:
-        plan = json.loads(args.plan.read_text())
-        extents = [e for e in plan.get('extents', [])
-                   if e.get('module') == 'com.apple.iokit.IOStorageFamily' and e.get('segment') == '__DATA_CONST']
-        if len(extents) != 1:
-            raise SystemExit('the plan does not have exactly one IOStorageFamily __DATA_CONST extent')
-        low = extents[0]['va']
-        high = low + extents[0]['size']
-        narrowed = [(address, target) for address, target in getters if low <= target < high]
-        print(f'IOStorageFamily __DATA_CONST: {low:#x}..{high:#x} ({extents[0]["size"]:#x} bytes)')
-        if not narrowed:
-            raise SystemExit('no ADRP/ADD/RET getter points into the IOStorageFamily data segment')
-        getters = narrowed
-    unique = sorted({target for _, target in getters})
-    print(f'candidate sha256 : {digest}')
-    print(f'IOService meta   : {service_meta:#x}   (cross-check against the kernel symbol table)')
-    print(f'metaclass getters: {len(getters)} ADRP/ADD/RET triples, {len(unique)} distinct targets')
-    for address, target in getters:
-        print(f'  getter {address:#x} -> {target:#x}')
+    np = load_kit(args.tree)
+    kernel, meta, service_meta, table, getter = derive(args, np)
+    digest = hashlib.sha256(kernel).hexdigest()
+    print(f'candidate sha256        : {digest}')
+    print(f'storage vtable          : {table:#x}')
+    print(f'vocabulary getter slot7 : {getter:#x}')
+    print(f'IOBlockStorageDevice meta: {meta:#x}   <- read 0x50 bytes here on the device')
+    print(f'IOService meta          : {service_meta:#x}   <- and here')
     print()
-    print('Read on the device (0x50 bytes each) and record with --gdb-log:')
+    print('GDB, inside the booted prelinked kernel:')
+    print(f'  x/80xb {meta:#x}')
     print(f'  x/80xb {service_meta:#x}')
-    for target in unique:
-        print(f'  x/80xb {target:#x}')
     print('  info registers tcr_el1 sctlr_el1 ttbr0_el1 ttbr1_el1')
+    addresses = {meta, service_meta}
 
     if not args.gdb_log:
         return
@@ -156,14 +122,14 @@ def main():
     for match in re.finditer(r'(0x[0-9a-f]+):\s*((?:0x[0-9a-f]{1,2}\s*)+)', log):
         address = int(match.group(1), 16)
         values = bytes(int(value, 16) for value in match.group(2).split())
-        if address in unique or address == service_meta:
+        if address in addresses:
             memory[f'{address:x}:50'] = values[:0x50].hex()
     registers = {}
     for name in ('tcr_el1', 'sctlr_el1', 'ttbr0_el1', 'ttbr1_el1'):
         found = re.search(rf'{name}\s+(0x[0-9a-f]+)', log, re.IGNORECASE)
         if found:
             registers[name.upper()] = found.group(1)
-    missing = [f'{address:x}:50' for address in [*unique, service_meta] if f'{address:x}:50' not in memory]
+    missing = [f'{address:x}:50' for address in addresses if f'{address:x}:50' not in memory]
     if missing:
         raise SystemExit('the GDB log is missing memory for: ' + ', '.join(missing))
     if len(registers) != 4:
