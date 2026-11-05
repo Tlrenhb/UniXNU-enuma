@@ -40,7 +40,9 @@ jobs:
       - name: Vendored builders are present
         run: |
           missing=0
-          for f in scripts/build-arm-driver.py scripts/build-link-stubs.py scripts/build-platform-power.py \
+          # scripts/build-arm-driver.py is deliberately absent on format 2: the upstream copy handles component
+          # ids (component:SoftwareAES -> legacy NativeAES) while the vendored one only knew the legacy names.
+          for f in scripts/build-link-stubs.py scripts/build-platform-power.py \
                    package/LinkStubs.c package/ShengPlatformPower.cpp scripts/patch-xnu-entry-probe.py; do
             if [ -f "$f" ]; then echo "present: $f"; else echo "MISSING: $f"; missing=1; fi
           done
