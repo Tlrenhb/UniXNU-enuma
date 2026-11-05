@@ -12,6 +12,10 @@ on:
         description: Device defconfig (schema 2 keeps it in board.toml [kernel])
         required: false
         default: enuma_ufs_defconfig
+      storage_audit:
+        description: Also qualify the original IOStorageFamily ABI and build the UFS bindings
+        type: boolean
+        default: false
       full:
         description: Run the whole release (kernel, payload, boot image), not just --check
         type: boolean
@@ -141,6 +145,31 @@ jobs:
           llvm-nm "$kernel" | grep -c NativeUfs || true
           shasum -a 256 "$kernel"
 
+      # Stage 2 groundwork, and the only route that lets the real ShengUfs block personality link: its
+      # eleven IOBlockStorageDevice symbols live in the prelinked collection and are never exported to
+      # the kernel link, so every virtual slot has to be resolved either to the driver's own override or
+      # to the recorded original address. The audit needs the object record from the kernel build above.
+      - name: Qualify the original storage ABI
+        if: inputs.storage_audit
+        working-directory: unixnu
+        run: |
+          set -euo pipefail
+          tree=$(ls -d out/enuma/*/*/tree | head -1)
+          test -n "$tree" || { echo "::error::no assembled tree"; exit 1; }
+          cd "$tree"
+          python3 scripts/audit-storage-interface.py
+          python3 -c "import json;d=json.load(open('build/storage-abi/interface-audit.json'));print('slots',d['method_slots'],'vtable',hex(d['vtable']),'live4k',d['live_native_4k'])"
+
+      - name: Build the UFS original bindings
+        if: inputs.storage_audit
+        working-directory: unixnu
+        run: |
+          set -euo pipefail
+          tree=$(ls -d out/enuma/*/*/tree | head -1)
+          cd "$tree"
+          python3 scripts/build-enuma-ufs-bindings.py
+          ls -l build/sheng-ufs/bindings.json
+
       - name: Payload (ADT from the board DTS)
         if: inputs.full
         working-directory: unixnu
@@ -171,4 +200,6 @@ jobs:
             # pipeline but leaves nothing to boot.
             unixnu/out/enuma/*/*/kernel/kernel.macho
             unixnu/out/enuma/*/*/payload/payload.img
+            unixnu/out/enuma/*/*/tree/build/storage-abi/interface-audit.json
+            unixnu/out/enuma/*/*/tree/build/sheng-ufs/bindings.json
           if-no-files-found: warn
