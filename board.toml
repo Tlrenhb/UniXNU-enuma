@@ -45,6 +45,11 @@ archives = [
   "component:SoftwareAES",
   "build-native-aes-bindings.py",
   "build-libpthread-kernel.py",
+  # CONFIG_XNU_SOURCE_MOCKFS 来自 arch 的 common.config，打开后 vfs_conf.o 会引用 mockfs 的三个符号；
+  # 缺这个构建器时 build-xnu-4k-baseline.sh 在 `test -f "$MOCKFS_ARCHIVE"` 处直接退出
+  # （2026-11-05 实测：kernel.log 只有这一行）。格式 2 的 [kernel] archives 取代了 profile 里的归档列表，
+  # 所以这一条必须显式列出。
+  "build-mockfs-fixture.py",
   "build-link-stubs.py",
   "build-platform-power.py",
   # component:ShengUfs 暂时不进 archives：它一编译就会要求 IOStorageFamily 的十一个基类符号，
