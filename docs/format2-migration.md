@@ -78,6 +78,27 @@ boot 镜像仍在有固件的地方打（私有流水线或本地 `scripts/ufs-r
 2. 拒绝脏工作区；
 3. `git merge --ff-only format2` 到 `main` 并推送。
 
+## 切换时必须同时做的一件事：钉住私有固件流水线的设备版本
+
+私有仓（`Tlrenhb/enuma-build`）的 `build-firmware.yml` 以 `ref: main` 检出设备仓，并依赖格式 1 的语义与路径：
+
+- `./unixnu build package` / `./unixnu build firmware --uefi …`（格式 1 的 firmware 步骤）；
+- `device/scripts/fetch-enuma-dts.py --fetch` → `device/out/astide/enuma.dtb`；
+- boot 镜像用 `--dtb device/out/astide/enuma.dtb` 打包。
+
+`main` 一旦切成 schema 2，这些都会变（`[firmware]` 的 dsc/fd/packages、dtb 产出于构建树）。所以切换时要把它的设备检出钉到格式 1 的最后一个提交：
+
+```yaml
+      - name: Check out the device repository (public)
+        uses: actions/checkout@v4
+        with:
+          repository: Tlrenhb/UniXNU-enuma
+          ref: f8f76c387f55f49195be69f9ebcc4ee412ea0986          # 格式 1 的最后一个提交；等固件流水线迁到格式 2 再改回 main
+          path: device
+```
+
+私有固件流水线的格式 2 迁移作为后续任务（它需要 `[firmware]` + overlay + vendor drop 的路径重新对齐）。
+
 ## 迁移后可以退役的东西
 
 - `drivers/ufs/`（vendor 的 ShengUfs 拷贝 + 手写探针）→ 由 `component:ShengUfs` 取代；
