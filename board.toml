@@ -26,7 +26,11 @@ last_lba = 61880314                  # 0x3b037fa：实测 size 473546712(512B)/8
 lba_bytes = 4096                     # 实测 blockdev --getss
 
 [kernel]
-defconfig = "enuma_ufs_defconfig"    # 阶段 2（UFS 根卷）；阶段 1 用 enuma_defconfig
+# 迁移期先跑阶段 1 的 defconfig：UFS 那一档要等块设备人格的 IOStorageFamily 绑定
+# （storage ABI 审计 + original-bindings）接进格式 2 的链条，否则 component:ShengUfs 会把
+# 十一个基类符号的链接问题原样带进来（格式 1 里就是这么卡住的）。
+# 阶段 2 重新打开时改回 enuma_ufs_defconfig 即可。
+defconfig = "enuma_defconfig"
 # 顺序即应用顺序：arch → soc → os → device。
 config_fragments = ["arch:configs/common.config", "soc:configs/sm8250.config", "os:configs/ipados.config"]
 patch_series = ["arch:patches/xnu/series", "soc:patches/xnu/series", "os:patches/xnu/series", "device:patches/xnu/series"]
@@ -40,9 +44,9 @@ archives = [
   "build-libpthread-kernel.py",
   "build-link-stubs.py",
   "build-platform-power.py",
-  # 上游的真 UFS 驱动。格式 1 里我们 vendor 了它并绕开块设备人格；格式 2 交给组件系统，
-  # 块设备人格的 IOStorageFamily 绑定走 storage ABI 审计那条原生路线。
-  "component:ShengUfs",
+  # component:ShengUfs 暂时不进 archives：它一编译就会要求 IOStorageFamily 的十一个基类符号，
+  # 而那要先把 storage ABI 审计 + original-bindings 接进链条（见 docs/format2-migration.md）。
+  # 组件本身仍列在 [components] include 里，绑定就绪后把这一行加回来。
 ]
 
 [firmware]
@@ -89,7 +93,7 @@ include_dirs = ["soc:dts"]
 dtb = "build/enuma/enuma.dtb"
 
 [components]
-include = ["ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot", "ShengUfs"]
+include = ["ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot"]
 
 [payload]
 volume = "ENUMAESP"
@@ -156,4 +160,4 @@ home-button-type = 2
 unixnu = "../UniXNU"
 
 [package.defconfig]
-"ipados-17.7.11-21H461" = "enuma_ufs_defconfig"
+"ipados-17.7.11-21H461" = "enuma_defconfig"
