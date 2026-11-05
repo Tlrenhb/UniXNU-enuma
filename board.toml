@@ -96,7 +96,9 @@ include_dirs = ["soc:dts"]
 dtb = "build/enuma/enuma.dtb"
 
 [components]
-include = ["ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot"]
+# SoftwareAES 必须在 include 里：enuma_defconfig 打开 CONFIG_XNU_NATIVE_AES，而 [kernel] archives 引用
+# `component:SoftwareAES` —— 不在 include 时 kernel 步骤直接报 "component SoftwareAES is not selected"。
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot"]
 
 [payload]
 volume = "ENUMAESP"
