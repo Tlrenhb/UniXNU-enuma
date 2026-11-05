@@ -1,4 +1,9 @@
-# 格式 1 → 格式 2 迁移（分支 `format2`）
+# 格式 1 → 格式 2 迁移（**已完成**，`main` 已是 schema 2）
+
+> 2026-11-05：`main` 由 `format2` 快进合并（`a82f00b`）。放行的唯一依据是那次**完整**的 CI run
+> `42069850732` —— 它的 "Assert the PMGR bridge is not a no-op stub" 步骤通过，`sheng_pmgr_run`
+> **439 条指令**（与格式 1 已知可用内核同值），payload 里带了由板级 DTS 生成的 ADT。
+> 格式 1 的板级文件留在 `legacy/board.toml.format1`，随时可对照。
 
 ## 为什么必须迁
 
@@ -12,7 +17,17 @@ patch_order = patches.plan(ctx, modules) if ctx.schema_version == 2 else []
 （`MAX_CPUS 4→8`，并让 BCM2837 机器配置按 kona 的编号方式从 MPIDR **AFF1** 取核号）。
 这正是我们 8 核挂死在 `ml_parse_cpu_topology` 的原因，也是迄今每张镜像都带 `cpus=1` 的原因。
 
-## 已完成（本地可复现）
+## 迁移结果（CI 实测）
+
+| 步骤 | 结果 |
+|---|---|
+| `unixnu fetch` / `tree` / `release --check` | ✅ |
+| Kernel pass 1（编译记录 + 首次内核） | ✅ |
+| Kernel pass 2（PMGR 桥对真内核链接） | ✅ |
+| 桥断言 | ✅ `sheng_pmgr_run has 439 instructions`，kernel.macho 52,011,008 B |
+| Payload（板级 DTS → ADT → payload.img） | ✅ 64 MiB |
+
+## 本地已完成（不需要 CI）
 
 | 项 | 状态 |
 |---|---|
