@@ -12,19 +12,38 @@ git rev-parse --verify "$BRANCH" >/dev/null || { echo "no such branch: $BRANCH";
 
 echo "--- last five format2 runs"
 python3 - "$BRANCH" <<'PY'
-import json, subprocess, sys
-token = open('/root/.gh_token').read().strip() if __import__('os').path.exists('/root/.gh_token') else ''
-request = ['curl', '-sS', '-m', '30', '-H', f'Authorization: Bearer {token}',
-           'https://api.github.com/repos/Tlrenhb/UniXNU-enuma/actions/runs?per_page=8']
-runs = json.loads(subprocess.run(request, capture_output=True, text=True).stdout)['workflow_runs']
-green = False
-for run in runs:
-    if run['head_branch'] != sys.argv[1]:
+"""Green means: the run built a kernel twice, asserted the PMGR bridge and produced a payload.
+
+A check-only run is also 'success', so the conclusion alone is not enough - the bridge assertion step
+has to have run and passed, which only happens with full=true.
+"""
+import json, os, subprocess, sys
+
+token = open('/root/.gh_token').read().strip() if os.path.exists('/root/.gh_token') else ''
+def api(path):
+    out = subprocess.run(['curl', '-sS', '-m', '30', '-H', f'Authorization: Bearer {token}',
+                          f'https://api.github.com/repos/Tlrenhb/UniXNU-enuma{path}'],
+                         capture_output=True, text=True).stdout
+    return json.loads(out)
+
+REQUIRED = 'Assert the PMGR bridge is not a no-op stub'
+green = None
+for run in api('/actions/runs?per_page=12')['workflow_runs']:
+    if run['head_branch'] != sys.argv[1] or not run['name'].startswith('format2'):
         continue
-    print(f"  {run['id']} {run['name'][:34]:34s} {run['status']:10s} {run['conclusion']}")
-    if run['name'].startswith('format2') and run['conclusion'] == 'success':
-        green = True
-print('a green format2 run exists' if green else 'NO green format2 run yet')
+    verdict = run['status'] == 'completed' and run['conclusion'] == 'success'
+    has_assertion = False
+    if verdict:
+        for job in api(f"/actions/runs/{run['id']}/jobs")['jobs']:
+            for step in job['steps']:
+                if step['name'] == REQUIRED and step['conclusion'] == 'success':
+                    has_assertion = True
+    print(f"  {run['id']} {run['status']:10s} {str(run['conclusion']):8s} "
+          f"bridge-assert={'yes' if has_assertion else 'no'}")
+    if verdict and has_assertion:
+        green = run['id']
+        break
+print(f'a green full format-2 run exists: {green}' if green else 'NO green full format-2 run yet')
 sys.exit(0 if green else 2)
 PY
 status=$?
