@@ -50,11 +50,17 @@ def load_kit(tree):
 
 
 def derive(args, np):
+    """Find the storage vtable and its metaclass getter, using only the candidate itself.
+
+    The plan written by emit_prelink does not carry the method list (that comes from the compiled
+    reference object inside the audit), so the vtable is identified structurally instead: a 16-byte zero
+    header followed by 190 non-zero pointers whose first two slots are the abstract complete/deleting
+    destructors (brk #0x10 traps) and whose slot 7 is an ADRP/ADD/RET metaclass getter resolving into the
+    kext's own __DATA_CONST. Those four facts together are what distinguishes this vtable.
+    """
     kernel = Path(args.candidate).read_bytes()
     plan = json.loads(Path(args.plan).read_text())
     image = np.macho(kernel)
-    exports = np.exports(kernel, image)
-    by_name = {name: va for va, names in exports.items() for name in names}
 
     def read(va, length):
         at = np.backed_offset(image['segments'], va, length, len(kernel))
@@ -62,28 +68,35 @@ def derive(args, np):
 
     extents = [e for e in plan['extents'] if e['module'] == 'com.apple.iokit.IOStorageFamily']
     const = next(e for e in extents if e['segment'] == '__DATA_CONST')
-    # The vtable is located exactly the way audit-storage-interface.py locates it: scan the kext's
-    # __DATA_CONST for 16 zero bytes followed by the method pointers that the kernel also exports.
+    text = next(e for e in extents if e['segment'] == '__TEXT_EXEC')
     blob = read(const['va'], const['size'])
-    methods = [m['reference_name'] for m in plan['methods']]
-    found = []
-    for at in range(0, len(blob) - (len(methods) + 2) * 8 + 1, 8):
+    brk = struct.pack('<I', 0xd4200020)
+    candidates = []
+    for at in range(0, len(blob) - 192 * 8 + 1, 8):
         if blob[at:at + 16] != bytes(16):
             continue
-        pointers = struct.unpack_from('<' + 'Q' * len(methods), blob, at + 16)
-        if all(pointers[i] == by_name[name] for i, name in enumerate(methods) if name in by_name):
-            found.append((const['va'] + at, pointers))
-    if len(found) != 1:
-        raise SystemExit(f'cannot uniquely identify the storage vtable (found {len(found)})')
-    table, pointers = found[0]
-    getter = pointers[7]
-    a, add, ret = struct.unpack('<3I', read(getter, 12))
-    if a & 0x9f00001f != 0x90000000 or add & 0xffc003ff != 0x91000000 or ret != 0xd65f03c0:
-        raise SystemExit('the slot-7 getter is not the expected ADRP/ADD/RET triple')
-    immediate = ((a >> 5 & 0x7ffff) << 2) | (a >> 29 & 3)
-    if immediate & 0x100000:
-        immediate -= 0x200000
-    meta = (getter & ~4095) + immediate * 4096 + (add >> 10 & 4095)
+        pointers = struct.unpack_from('<190Q', blob, at + 16)
+        if any(pointer == 0 for pointer in pointers):
+            continue
+        if read(pointers[0], 4) != brk or read(pointers[1], 4) != brk:
+            continue
+        getter = pointers[7]
+        if not (text['va'] <= getter < text['va'] + text['size']):
+            continue
+        a, add, ret = struct.unpack('<3I', read(getter, 12))
+        if a & 0x9f00001f != 0x90000000 or add & 0xffc003ff != 0x91000000 or ret != 0xd65f03c0:
+            continue
+        immediate = ((a >> 5 & 0x7ffff) << 2) | (a >> 29 & 3)
+        if immediate & 0x100000:
+            immediate -= 0x200000
+        meta = (getter & ~4095) + immediate * 4096 + (add >> 10 & 4095)
+        if const['va'] <= meta < const['va'] + const['size']:
+            candidates.append((const['va'] + at, getter, meta))
+    if len(candidates) != 1:
+        raise SystemExit(f'cannot uniquely identify the storage vtable structurally (found {len(candidates)})')
+    table, getter, meta = candidates[0]
+    exports = np.exports(kernel, image)
+    by_name = {name: va for va, names in exports.items() for name in names}
     service_meta = by_name['__ZN9IOService10gMetaClassE']
     return kernel, meta, service_meta, table, getter
 
