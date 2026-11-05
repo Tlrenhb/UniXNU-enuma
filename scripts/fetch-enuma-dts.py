@@ -734,7 +734,19 @@ def main(argv=None):
     try:
         if args.compare:
             return cmd_compare(args)
-        return cmd_check(args) if args.check else cmd_fetch(args)
+        if args.check:
+            return cmd_check(args)
+        code = cmd_fetch(args)
+        if code == EXIT_OK:
+            # UniXNU format 2 names the boot image's device tree relative to the build tree
+            # ([bootimg] dtb = "build/enuma/enuma.dtb") and expects a firmware preflight script to
+            # produce it, so the compiled tree is copied there as well.
+            target = Path('build/enuma/enuma.dtb')
+            if P.dtb.is_file():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(P.dtb.read_bytes())
+                print(f'format 2: {P.dtb} -> {target} ({target.stat().st_size} B)')
+        return code
     except Failure as failure:
         print(f'FAIL: {failure}', file=sys.stderr)
         return failure.code

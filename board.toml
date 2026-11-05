@@ -49,7 +49,7 @@ archives = [
 config = "enuma"
 dsc = "Platforms/Xiaomi/enumaPkg/enuma.dsc"
 fd = "Build/enumaPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
-preflight = ["scripts/check-enuma.py"]
+preflight = ["scripts/fetch-enuma-dts.py", "scripts/check-enuma.py"]
 submodules = [
   # 官方 Mu-Silicium 子模块；"Binaries" 故意不列：enuma 的 vendor drop 由工作流从官方 fastboot ROM
   # 的 xbl.elf 放到 Binaries/enuma/，不能让 submodule init 去拉。
@@ -118,6 +118,7 @@ chip_id = "356"                      # 0x164，SM8250
 owned_memory_size = "0x10000000"
 packed_data_ramdisk = true
 ipad_identity = true
+root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"   # 同一 IPSW 的 OS 卷 UUID（pipa/umi 同值）
 unique_chip_id = "required"          # 平台种子不存仓库
 
 [adt]
