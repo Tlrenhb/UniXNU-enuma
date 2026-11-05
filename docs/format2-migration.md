@@ -112,6 +112,20 @@ build-arm-driver.py: error: argument component: invalid choice: 'SoftwareAES'
 那份副本原本只为了编 `EnumaUfsProbe.cpp`（格式 1 的只读探针），格式 2 用不上，所以在 `format2` 分支删掉，
 让主仓的构建器接管。`build-link-stubs.py` 与 `build-platform-power.py` 仍保留（主仓没有）。
 
+## 迁移踩过的坑（每条都对应一次 CI 失败）
+
+| 现象 | 根因 | 处置 |
+|---|---|---|
+| job 绿但产物没出来 | `run: … \| tee log` 的退出码是 `tee` 的 | 所有 release 步骤加 `set -euo pipefail` |
+| `patch does not apply` @ `bsd_init.c:773` | os 系列的 `zzz-boot-progress.patch` 给 `sheng_pmgr_run()` 加插桩，而那个调用点来自 **sm8550 包**里的 `sheng-platform-power.patch`，我们的 sm8250 包没有 | 设备系列收进该补丁，顺序改 arch → soc → **device → os** |
+| `AMFI: No PMGR?`（潜在） | 同上：桥编出来但没人调用 | 同上 + 两遍 kernel 构建 + `_sheng_pmgr_run` 指令数断言 |
+| `component SoftwareAES is not selected` | `archives` 引用而 `[components] include` 未列 | 加入 include（四个 `component:` 引用逐一核对） |
+| `invalid choice: 'SoftwareAES'` | 本仓 vendored 的 `build-arm-driver.py` 只认 legacy 名，主仓那份才有 catalog 映射 | 格式 2 分支删除该副本 |
+| `IOPlatformExpert.cpo.json` 找不到 | 审计脚本要在**装配好的树**里跑 | 路径改到 `out/enuma/tree` |
+| `Couldn't open dts/enuma.dts` | `git mv` 移错了文件 | 板级 DTS 与合并树各归其位 |
+| `trust cache … is not one of the trust caches this board accepts` | 白名单钉的是 **bundle** 的 sha256，不是原始成员 | 先跑 `make-trust-bundle-from-members.py` 再传给 payload |
+| `release` 卡在 firmware | `release` 步骤含 firmware，需要 overlay + vendor drop（专有） | 公有流水线只做 kernel×2 + payload，boot 镜像留在私有侧 |
+
 ## 迁移后可以退役的东西
 
 - `drivers/ufs/`（vendor 的 ShengUfs 拷贝 + 手写探针）→ 由 `component:ShengUfs` 取代；
