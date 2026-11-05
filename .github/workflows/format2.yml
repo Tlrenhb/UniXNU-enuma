@@ -144,7 +144,10 @@ jobs:
         working-directory: unixnu
         run: |
           set -euo pipefail
-          ./unixnu build payload 2>&1 | tee /tmp/payload.log
+          # The ADT generator refuses to build a platform identity without a seed:
+          # "[payload.adt] unique_chip_id = required" -> pass --unique-chip-id. The value is the same one
+          # the format-1 images used, so a payload built here matches them.
+          ./unixnu build payload --unique-chip-id ac2fe17bae1d567c 2>&1 | tee /tmp/payload.log
 
       # The boot image needs the firmware volume, and that comes out of the private pipeline: the
       # enumaPkg overlay plus the Xiaomi vendor drop (xbl.elf) never enter this repository. So the public
