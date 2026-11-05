@@ -109,6 +109,9 @@ include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot"]
 volume = "ENUMAESP"
 size_mib = 64
 loader = "firmware"
+# -1 = 停在菜单等按键。默认的 3 秒自动选第一项，在真机上意味着"插上就自己跑"，
+# 取证时来不及摆相机，也会让一次误操作立刻变成一次启动。
+timeout = -1
 title = "enuma：4 KiB XNU 到 panic 屏 / UFS 只读取证"
 dram_size = "0x200000000"            # 最高 System RAM 银行止于 0x280000000，减 0x80000000 DRAM 基址
 skip_setup_tool = "scripts/seed-data-skip-setup.py"
@@ -120,7 +123,10 @@ kernel_args = [
   "kt_fixed_zones=120",
   "armcpu-diagnostics=1",
   "sheng-pmgr=2",
-  "native-ufs-probe=9",
+  # native-ufs-probe 不在这里：那个参数是格式 1 我们自己探针的名字，而格式 2 用的是上游 ShengUfs 驱动，
+  # 它的 mode 9 会把 START STOP UNIT 发给 LUN 0xD0（改变设备电源态）再读 GPT 并 panic。enuma_defconfig
+  # 现在把 UFS 关着，参数不会生效，但留着就是一颗哑弹 —— UFS 一旦打开它会真的动手。要做 UFS 实验时
+  # 单独发一张镜像、显式指定模式。
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",
   # cpus=1 已去掉：device:patches/xnu/series 的 native-smp-secondary.patch 把 MAX_CPUS 提到 8，
