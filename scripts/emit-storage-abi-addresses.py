@@ -70,31 +70,46 @@ def derive(args, np):
     const = next(e for e in extents if e['segment'] == '__DATA_CONST')
     text = next(e for e in extents if e['segment'] == '__TEXT_EXEC')
     blob = read(const['va'], const['size'])
+
     brk = struct.pack('<I', 0xd4200020)
+    headers = 0        # 16 zero bytes at an 8-aligned offset
+    with_pointers = 0  # ... followed by 190 non-zero pointers
+    brk_slots = 0      # ... whose slots 0/1 are brk #0x10
+    getter_ok = 0      # ... whose slot 7 is an ADRP/ADD/RET getter inside the kext text
     candidates = []
     for at in range(0, len(blob) - 192 * 8 + 1, 8):
         if blob[at:at + 16] != bytes(16):
             continue
+        headers += 1
         pointers = struct.unpack_from('<190Q', blob, at + 16)
         if any(pointer == 0 for pointer in pointers):
             continue
+        with_pointers += 1
         if read(pointers[0], 4) != brk or read(pointers[1], 4) != brk:
             continue
+        brk_slots += 1
         getter = pointers[7]
         if not (text['va'] <= getter < text['va'] + text['size']):
             continue
         a, add, ret = struct.unpack('<3I', read(getter, 12))
         if a & 0x9f00001f != 0x90000000 or add & 0xffc003ff != 0x91000000 or ret != 0xd65f03c0:
             continue
+        getter_ok += 1
         immediate = ((a >> 5 & 0x7ffff) << 2) | (a >> 29 & 3)
         if immediate & 0x100000:
             immediate -= 0x200000
         meta = (getter & ~4095) + immediate * 4096 + (add >> 10 & 4095)
-        if const['va'] <= meta < const['va'] + const['size']:
-            candidates.append((const['va'] + at, getter, meta))
-    if len(candidates) != 1:
-        raise SystemExit(f'cannot uniquely identify the storage vtable structurally (found {len(candidates)})')
-    table, getter, meta = candidates[0]
+        candidates.append((const['va'] + at, getter, meta))
+    print(f"__DATA_CONST {const['va']:#x}+{const['size']:#x}: {headers} zero headers, "
+          f"{with_pointers} with 190 non-zero pointers, {brk_slots} with brk slots, {getter_ok} with getters")
+    for table, getter, meta in candidates:
+        where = 'inside' if const['va'] <= meta < const['va'] + const['size'] else 'outside'
+        print(f'  candidate vtable {table:#x} getter {getter:#x} meta {meta:#x} ({where} __DATA_CONST)')
+    inside = [entry for entry in candidates if const['va'] <= entry[2] < const['va'] + const['size']]
+    if len(inside) != 1:
+        raise SystemExit(f'cannot uniquely identify the storage vtable '
+                         f'(candidates {len(candidates)}, inside __DATA_CONST {len(inside)})')
+    table, getter, meta = inside[0]
     exports = np.exports(kernel, image)
     by_name = {name: va for va, names in exports.items() for name in names}
     service_meta = by_name['__ZN9IOService10gMetaClassE']
