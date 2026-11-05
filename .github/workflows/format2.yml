@@ -164,6 +164,21 @@ jobs:
       # qualifies the original storage ABI, and it cannot be produced in CI. Without the record the audit
       # stops with a FileNotFoundError, so this step reports the prerequisite instead of pretending the
       # pipeline is broken.
+      # Print, into the run log, exactly what has to be read on the tablet: the two metaclass addresses
+      # (the IOBlockStorageDevice one is derived from the candidate's plan, because it lives in the
+      # prelinked IOStorageFamily kext and is not in the kernel symbol table) and the candidate sha256 the
+      # live record must carry.
+      - name: Print the addresses the live storage record must contain
+        if: inputs.storage_audit
+        working-directory: unixnu
+        run: |
+          set -euo pipefail
+          tree=$(ls -d out/enuma/*/*/tree | head -1)
+          cd "$tree"
+          python3 scripts/emit-storage-abi-addresses.py \
+            --candidate build/xnu-prelink/native-apfs-load-positive.macho \
+            --plan build/xnu-prelink/native-apfs-load-positive.json | tee /tmp/storage-abi-addresses.txt
+
       - name: Qualify the original storage ABI
         if: inputs.storage_audit
         working-directory: unixnu
