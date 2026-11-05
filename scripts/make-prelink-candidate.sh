@@ -10,7 +10,15 @@ set -euo pipefail
 tree=${1:?usage: make-prelink-candidate.sh <assembled tree>}
 cd "$tree"
 kernel=build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped
-prelinked=$(ls ../ipsw/*/kernelcache.decompressed | head -1)
+# The IPSW cache sits at <out>/ipsw/<build>/, and how far up that is depends on the layout
+# (format 2: out/<device>/<os>/<config>/tree). Walk up instead of assuming a depth.
+prelinked=""
+for parent in .. ../.. ../../.. ../../../..; do
+  candidate=$(ls "$parent"/ipsw/*/kernelcache.decompressed 2>/dev/null | head -1 || true)
+  if [ -n "$candidate" ]; then prelinked=$candidate; break; fi
+done
+[ -n "$prelinked" ] || { echo "no kernelcache.decompressed under ../ipsw; run unixnu ipsw fetch" >&2; exit 2; }
+echo "prelinked: $prelinked"
 mkdir -p build/xnu-prelink
 rm -f build/xnu-prelink/native-apfs-load-positive.macho
 python3 kits/XnuPrelink/emit_prelink.py \
