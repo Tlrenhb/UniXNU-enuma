@@ -105,11 +105,12 @@ def derive(args, np):
     for table, getter, meta in candidates:
         where = 'inside' if const['va'] <= meta < const['va'] + const['size'] else 'outside'
         print(f'  candidate vtable {table:#x} getter {getter:#x} meta {meta:#x} ({where} __DATA_CONST)')
-    inside = [entry for entry in candidates if const['va'] <= entry[2] < const['va'] + const['size']]
-    if len(inside) != 1:
-        raise SystemExit(f'cannot uniquely identify the storage vtable '
-                         f'(candidates {len(candidates)}, inside __DATA_CONST {len(inside)})')
-    table, getter, meta = inside[0]
+    # The metaclass lives in the kext's writable __DATA, not in __DATA_CONST - the diagnostic run's single
+    # candidate had meta 0xfffffff006add1d0, outside the segment the vtable sits in, and the audit never
+    # asks for it to be inside. The four structural facts already leave exactly one candidate.
+    if len(candidates) != 1:
+        raise SystemExit(f'cannot uniquely identify the storage vtable (candidates {len(candidates)})')
+    table, getter, meta = candidates[0]
     exports = np.exports(kernel, image)
     by_name = {name: va for va, names in exports.items() for name in names}
     service_meta = by_name['__ZN9IOService10gMetaClassE']
