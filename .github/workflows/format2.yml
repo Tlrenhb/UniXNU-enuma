@@ -23,7 +23,7 @@ on:
       kernel_sha:
         description: UniXNU revision (pinned; bump deliberately)
         required: false
-        default: "e2fdae4312"   # 2026-11-05 18:15 (145 commits after a885256c53)
+        default: "e2fdae4312d0acc3d8a52bc457101e7918095e6a"   # 2026-11-05 18:15 (145 commits after a885256c53)
 
 permissions:
   contents: read
