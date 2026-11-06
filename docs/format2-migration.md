@@ -146,6 +146,39 @@ build/darwinboot-storage-native-metadata/gdb-stop.json
 - `component:ShengUfs` 进 archives、`CONFIG_XNU_NATIVE_UFS=y` 都等这份记录；
 - 记录一旦有（真机 GDB 会话 + 提交到设备仓 `build/`），审计 → `build-enuma-ufs-bindings.py` → 归档 → 打开 UFS，一条链就通了。
 
+### 实机取证清单（照抄即可）
+
+CI 的 `Print the addresses the live storage record must contain` 步骤会打印本次构建的确切地址。最近一次
+（run `42135112172`，2026-11-06 00:29 UTC）：
+
+```
+candidate sha256         : 2e174a3cf4821c87fb93b6b3321787b9a2aaa991406ffe0331aaa9947444fc69
+storage vtable           : 0xfffffff005cb44c0
+IOBlockStorageDevice meta: 0xfffffff006add1d0    <- 读 0x50 字节
+IOService meta           : 0xfffffff007b01538    <- 读 0x50 字节
+```
+
+在平板上（prelinked 内核跑起来之后）：
+
+```
+x/80xb 0xfffffff006add1d0
+x/80xb 0xfffffff007b01538
+info registers tcr_el1 sctlr_el1 ttbr0_el1 ttbr1_el1
+```
+
+把 gdb 输出存成文件，然后：
+
+```
+python3 scripts/emit-storage-abi-addresses.py \
+  --candidate <候选.macho> --plan <候选.json> --gdb-log gdb.txt \
+  --out build/darwinboot-storage-native-metadata/gdb-stop.json
+```
+
+生成的 JSON 与 CI 打印的 sha256/地址一致（脚本会校验），提交到设备仓 `build/` 后重跑
+`storage_audit=true` 即可继续。
+
+**注意**：地址随构建而变（每次 prelink 的候选不同），所以每次都要用当次 CI 打印的那组，不要复用旧值。
+
 ## 迁移踩过的坑（每条都对应一次 CI 失败）
 
 | 现象 | 根因 | 处置 |
