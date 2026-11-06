@@ -93,39 +93,24 @@ boot 镜像仍在有固件的地方打（私有流水线或本地 `scripts/ufs-r
 2. 拒绝脏工作区；
 3. `git merge --ff-only format2` 到 `main` 并推送。
 
-## 切换时必须同时做的一件事：钉住私有固件流水线的设备版本
+## 私有固件流水线已迁到格式 2（2026-11-06）
 
-私有仓（`Tlrenhb/enuma-build`）的 `build-firmware.yml` 以 `ref: main` 检出设备仓，并依赖格式 1 的语义与路径：
+`Tlrenhb/enuma-build` 的 `build-firmware.yml` 原本钉在格式 1 的最后一个提交，因为它用格式 1 语义。现在它
+跟着 `main` 走了，改动三处（提交 `4d08fb2`、`637262aa`、`2080c59d`、`caf35640`）：
 
-- `./unixnu build package` / `./unixnu build firmware --uefi …`（格式 1 的 firmware 步骤）；
-- `device/scripts/fetch-enuma-dts.py --fetch` → `device/out/astide/enuma.dtb`；
-- boot 镜像用 `--dtb device/out/astide/enuma.dtb` 打包。
+| 项 | 之前 | 现在 |
+|---|---|---|
+| UniXNU 检出 | `main` | 钉 `dc98673cad1d`（`main` 的 `ArmCpu` 子模块指针指向不存在的 `2e11cda72`，`unixnu fetch` 会死于 `upload-pack: not our ref`） |
+| 设备仓检出 | 钉 `f8f76c3`（格式 1 提交） | `main`（schema 2） |
+| boot 镜像的设备树 | `--dtb device/out/astide/enuma.dtb` | `--dtb <tree>/build/enuma/enuma.dtb`（固件 preflight 产出） |
+| dtc | 在 payload 之前才装 | 在 `Build the firmware` **之前**装（preflight 要它，否则 `FileNotFoundError: 'dtc'`） |
 
-`main` 一旦切成 schema 2，这些都会变（`[firmware]` 的 dsc/fd/packages、dtb 产出于构建树）。所以切换时要把它的设备检出钉到格式 1 的最后一个提交：
+验证：run `42207810918` 全绿 —— `Build the firmware` ✓、`Record the merged device tree` 打印
+`…/tree/build/enuma/enuma.dtb` sha256 `296c7e91…`（与钉住的合并树一致）、`Build the boot image` 产出
+`out/enuma/…/boot/boot.img`（35,110,912 B，M1 固件镜像）。
 
-```yaml
-      - name: Check out the device repository (public)
-        uses: actions/checkout@v4
-        with:
-          repository: Tlrenhb/UniXNU-enuma
-          ref: f8f76c387f55f49195be69f9ebcc4ee412ea0986          # 格式 1 的最后一个提交；等固件流水线迁到格式 2 再改回 main
-          path: device
-```
-
-私有固件流水线的格式 2 迁移作为后续任务（它需要 `[firmware]` + overlay + vendor drop 的路径重新对齐）。
-
-### 已退役：本仓的 `scripts/build-arm-driver.py`
-
-格式 2 里 `component:SoftwareAES` 会调 `build-arm-driver.py SoftwareAES`，而 UniXNU 主仓那份通过
-`components.toml` 的 catalog 把 `SoftwareAES` 映射回 legacy 名 `NativeAES`。我们 vendored 的副本没有这个映射
-（它的 `--component` 只认 `NativeAES` 等旧名），于是第一次 pass 报：
-
-```
-build-arm-driver.py: error: argument component: invalid choice: 'SoftwareAES'
-```
-
-那份副本原本只为了编 `EnumaUfsProbe.cpp`（格式 1 的只读探针），格式 2 用不上，所以在 `format2` 分支删掉，
-让主仓的构建器接管。`build-link-stubs.py` 与 `build-platform-power.py` 仍保留（主仓没有）。
+注意：`unixnu bootimg` **不会**自己解析 `[bootimg] dtb`（那是 `unixnu release` 的行为），所以这里仍然显式
+传 `--dtb`，只是路径换成格式 2 的那份。
 
 ## 阶段 2 的存储绑定是**硬件门禁**，不是代码问题
 
