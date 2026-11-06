@@ -23,12 +23,12 @@ on:
       kernel_sha:
         description: UniXNU revision (pinned; bump deliberately)
         required: false
-        # 2026-11-04 18:39. Deliberately *not* the newest commit: every UniXNU revision from 43e95b2f50
-      # (2026-11-04 22:02) onwards points drivers/ArmCpu at 2e11cda72, a commit UniXNU/ArmCpu does not
-      # contain ("upload-pack: not our ref"), so `unixnu fetch` dies while initialising submodules. This is
-      # the newest revision whose ArmCpu pointer resolves, verified against the API for every commit from
-      # here to HEAD. Bump again once upstream fixes the pointer.
-      default: "dc98673cad1d7741ca03cea979c577bb81bc58db"
+        # 2026-11-04 18:39. Deliberately not the newest commit: every UniXNU revision from 43e95b2f50
+        # (2026-11-04 22:02) onwards points drivers/ArmCpu at 2e11cda72, which UniXNU/ArmCpu does not
+        # contain ("upload-pack: not our ref"), so unixnu fetch dies initialising submodules. This is the
+        # newest revision whose ArmCpu pointer resolves, checked against the API for every commit up to
+        # HEAD. Bump again when upstream fixes the pointer.
+        default: "dc98673cad1d7741ca03cea979c577bb81bc58db"
 
 permissions:
   contents: read
