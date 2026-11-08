@@ -238,6 +238,11 @@ jobs:
             /tmp/status.json
             /tmp/release-check.log
             /tmp/release.log
+            # The two metaclass addresses emit-storage-abi-addresses.py derived from the prelink plan.
+            # IOBlockStorageDevice's metaclass cannot be reached through the plain symbol table (in the
+            # prelinked collection the data symbols point at the name strings), so this file is the only
+            # way to finish the storage ABI record off the runner. 2026-11-08.
+            /tmp/storage-abi-addresses.txt
             unixnu/out/enuma/**/logs/**
             # The products, so a boot image can be packed locally against the firmware volume from the
             # private pipeline (the only place that has the vendor drop). Without these the run proves the
