@@ -35,6 +35,13 @@ CONFIG_XNU_NATIVE_ARCH_TIMER=y
 CONFIG_XNU_NATIVE_PAN=y
 CONFIG_XNU_SHENG_PMGR=y
 
+# 2026-11-08: the kernel boots to vfs_mountroot and then panics because there is no root
+# device (IOFindBSDRoot waits for an IOMedia nothing publishes). mockfs is XNU's built-in
+# executable-root filesystem and is tried last by vfs_mountroot, but vfs_conf.c only sets
+# vfc_mountroot when MOCKFS is defined, so without this line the fixture objects are linked
+# yet never used as a root. Enabling it is the only way to get a root with no storage driver.
+CONFIG_XNU_SOURCE_MOCKFS=y
+
 CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
 # 被裁掉组件的探针需要 no-op 钩子（scripts/build-link-stubs.py，通用）。
 CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/link-stubs/libLinkStubs.a"
