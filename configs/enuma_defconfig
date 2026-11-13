@@ -30,6 +30,10 @@ CONFIG_XNU_ARMCPU=y
 CONFIG_XNU_NATIVE_AES=y
 CONFIG_XNU_TRUST_CACHE_RUNTIME=y
 CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
+
+# 2026-11-13: 存储。ShengUfs 组件 + build-storage-bindings.py 已经把基类符号补齐（见 board.toml 的 archives），
+# 所以阶段 2 的 UFS 可以打开。SM8250 是 UFS 3.1，走 native-ufs-stream=0xe0。
+CONFIG_XNU_NATIVE_UFS=y
 CONFIG_XNU_DT_PANIC_REGION=y
 CONFIG_XNU_NATIVE_ARCH_TIMER=y
 CONFIG_XNU_NATIVE_PAN=y

@@ -52,9 +52,15 @@ archives = [
   "build-mockfs-fixture.py",
   "build-link-stubs.py",
   "build-platform-power.py",
-  # component:ShengUfs 暂时不进 archives：它一编译就会要求 IOStorageFamily 的十一个基类符号，
-  # 而那要先把 storage ABI 审计 + original-bindings 接进链条（见 docs/format2-migration.md）。
-  # 组件本身仍列在 [components] include 里，绑定就绪后把这一行加回来。
+  # 存储链路（2026-11-13 接入）。ShengUfs 一编译就要 IOStorageFamily 的十一个基类符号，而 IOKit 是
+  # prelinked、一个都不导出，所以 archive 之后必须再跑 build-storage-bindings.py 把绝对地址绑上去。
+  # 地址取 scripts/data/native-storage-original-bindings.S（静态推导）；这份文件对 enuma 有效，因为它是
+  # 同一 OS profile（ipados-17.7.11-21H461）的 original link 地址，与本板额外组件无关 —— 已用本仓库 CI
+  # 独立推导的 vtable 0xfffffff005cb44c0 / getter 0xfffffff00496edc4 / meta 0xfffffff006add1d0 三个值逐一对上。
+  "component:ShengUfs",
+  "build-storage-bindings.py --component NativeUfs --archive libShengUfs.a --directory build/sheng-ufs",
+  "component:RamBlock",
+  "build-storage-bindings.py --component NativeRamBlock --archive libRamBlock.a --directory build/ram-block --subset",
 ]
 
 [firmware]
@@ -103,7 +109,7 @@ dtb = "build/enuma/enuma.dtb"
 [components]
 # SoftwareAES 必须在 include 里：enuma_defconfig 打开 CONFIG_XNU_NATIVE_AES，而 [kernel] archives 引用
 # `component:SoftwareAES` —— 不在 include 时 kernel 步骤直接报 "component SoftwareAES is not selected"。
-include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot"]
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "ShengUfs", "VirtioMmioBlock", "RamBlock", "XnuPrelink", "DarwinBoot"]
 
 [payload]
 volume = "ENUMAESP"
@@ -127,6 +133,9 @@ kernel_args = [
   # 它的 mode 9 会把 START STOP UNIT 发给 LUN 0xD0（改变设备电源态）再读 GPT 并 panic。enuma_defconfig
   # 现在把 UFS 关着，参数不会生效，但留着就是一颗哑弹 —— UFS 一旦打开它会真的动手。要做 UFS 实验时
   # 单独发一张镜像、显式指定模式。
+  # SM8250 把 UFS 主机接在 stream 0x0e0 / 0x4e0 上；NativeUfs 的默认 0x60 是 sheng（SM8550）的板子。
+  # 少了这条，SMMU 会把 UFS 的 DMA 拒绝掉（alioth 同 SoC 的实测结论）。
+  "native-ufs-stream=0xe0",
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",
   # cpus=1 已去掉：device:patches/xnu/series 的 native-smp-secondary.patch 把 MAX_CPUS 提到 8，
