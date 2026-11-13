@@ -38,7 +38,12 @@ CONFIG_XNU_NATIVE_PAN=y
 CONFIG_XNU_SHENG_PMGR=y
 
 CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
-CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/link-stubs/libLinkStubs.a"
+# 阶段 2 打开 UFS 后，配置里会引用 mockfs 的三个符号（arch:configs/common.config 里 SOURCE_MOCKFS 的
+# 编译期 -DMOCKFS=1）和 sheng_pmgr_run，而这两组都不在 link-stubs 里。2026-11-13 实测：只给 link-stubs 时
+# 第一遍内核链接以 `_mockfs_mountroot` / `_sheng_pmgr_run` 未定义失败（run 43449950071）。
+# 三个归档的路径来自各自的构建器：link-stubs、mockfs-fixture（build-mockfs-fixture.py）、
+# sheng-platform-power（scripts/build-platform-power.py，第二遍会用它编出的真桥覆盖同名归档）。
+CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/link-stubs/libLinkStubs.a {tree}/build/mockfs-fixture/libmockfs_fixture.a {tree}/build/sheng-platform-power/libShengPlatformPower.a"
 CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
 CONFIG_XNU_ARMVIRT_PLATFORM=n
 
