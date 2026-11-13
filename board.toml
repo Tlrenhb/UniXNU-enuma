@@ -58,7 +58,9 @@ archives = [
   # 同一 OS profile（ipados-17.7.11-21H461）的 original link 地址，与本板额外组件无关 —— 已用本仓库 CI
   # 独立推导的 vtable 0xfffffff005cb44c0 / getter 0xfffffff00496edc4 / meta 0xfffffff006add1d0 三个值逐一对上。
   "component:ShengUfs",
-  "build-storage-bindings.py --component NativeUfs --archive libShengUfs.a --directory build/sheng-ufs",
+  # --subset: 录制文件带的 __ZN7IOMedia9metaClassE 这一版 ShengUfs 并不引用（第一次构建时
+  # build-storage-bindings.py 直接以此报错退出，2026-11-13 run 43443228954 的 archive-13 日志）。
+  "build-storage-bindings.py --component NativeUfs --archive libShengUfs.a --directory build/sheng-ufs --subset",
   "component:RamBlock",
   "build-storage-bindings.py --component NativeRamBlock --archive libRamBlock.a --directory build/ram-block --subset",
 ]
