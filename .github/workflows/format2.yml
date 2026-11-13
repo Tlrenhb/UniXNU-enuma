@@ -28,7 +28,7 @@ on:
         # contain ("upload-pack: not our ref"), so unixnu fetch dies initialising submodules. This is the
         # newest revision whose ArmCpu pointer resolves, checked against the API for every commit up to
         # HEAD. Bump again when upstream fixes the pointer.
-        default: "dc98673cad1d7741ca03cea979c577bb81bc58db"
+        default: "7d85ede80092050f4d87f72ac7229bb605ce07fb"
 
 permissions:
   contents: read
