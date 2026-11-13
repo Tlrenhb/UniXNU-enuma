@@ -45,6 +45,9 @@ CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/link-stubs/libLinkStubs.a"
 CONFIG_XNU_ARMVIRT_PLATFORM=n
 
 CONFIG_XNU_NATIVE_UFS=y
+# 阶段累积：阶段 2 打开了 mockfs（vfs_conf.o 以 -DMOCKFS=1 编译，fixture 由内核脚本 force_load），
+# 后续阶段必须保留，否则 check-enuma.py 报 "stages must be cumulative"。
+CONFIG_XNU_SOURCE_MOCKFS=y
 CONFIG_XNU_SMMU4K_PROBE=y
 
 # —— 阶段 3 新增 ——
