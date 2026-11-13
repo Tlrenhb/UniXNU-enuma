@@ -2,7 +2,11 @@
 #
 # 进入条件：
 #   - 阶段 1 已在真机跑通（菜单 + DarwinBoot + 内核入口探针可见）；
-#   - NativeUfs 的 SM8250 移植已写出（**不是**直接打开 sheng 的开关）：
+#   - ~~NativeUfs 的 SM8250 移植已写出（不是直接打开 sheng 的开关）~~ **2026-11-13 修正**：同 SoC 的
+#     alioth（Redmi K40，SM8250-AC）用上游 `component:ShengUfs` + `native-ufs-stream=0xe0` 就跑到了
+#     launchd，所以不需要另写一份 SM8250 寄存器序列；缺的只是 original bindings，已由
+#     build-storage-bindings.py + scripts/data/native-storage-original-bindings.S 接进 archives。
+#     下面这些常量仍然是我们核对寄存器时的依据：
 #       控制器 ufshc@0x1d84000（reg 0x1d84000 0x3000 + ICE 0x1d90000 0x8000）、PHY 0x1d87000、
 #       IRQ GIC_SPI 265 (LEVEL_HIGH)、2 lane/方向、ref clk 19.2 MHz、core clk 37.5–300 MHz；
 #       PHY = QMP **v4**（`qcom,ufs-phy-qmp-v4`）；供电 rail：vdda-phy=pm8150_l5、vdda-pll=pm8150_l9、
@@ -17,9 +21,9 @@
 # 与阶段 1 的差异（增量）：
 #   + CONFIG_XNU_NATIVE_UFS=y                 ← 由 sheng 的 SM8550 版本改写为 SM8250（UFS 3.1）寄存器序列
 #   + CONFIG_XNU_SMMU4K_PROBE=y               ← 只探测，不接管；umi 全程保持 =n，我们先用探针取证
-# 需要同步更新：board.toml 的 `[kernel] defconfig = "enuma_ufs_defconfig"`，并在 `[kernel] archives` 里
-# 加入 UFS 归档构建脚本（名字以 pin 住的 revision 为准；current main 已无 native-ufs 构建器，见
-# umi-cas-learnings.md 的"不要用最新 upstream main 替代 pin"）。
+# board.toml 的 `[kernel] archives` 现在按组件目录取 ShengUfs（`component:ShengUfs`）并紧跟一条
+# `build-storage-bindings.py --component NativeUfs`，两者都是 2026-11-13 接上的；构建时用
+# `defconfig=enuma_ufs_defconfig`（阶段 1 的 enuma_defconfig 不打开 UFS，预检会拦）。
 
 CONFIG_XNU_SOURCE_CORECRYPTO14=y
 CONFIG_XNU_SOURCE_PTHREAD=y
