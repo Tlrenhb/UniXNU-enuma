@@ -187,4 +187,7 @@ home-button-type = 2
 unixnu = "../UniXNU"
 
 [package.defconfig]
-"ipados-17.7.11-21H461" = "enuma_defconfig"
+# 2026-11-13: 与 [kernel] defconfig 必须同步。这一项决定 package（含内核编译）用哪份配置；
+# 只改 [kernel] 那一处时内核仍然是阶段 1 的产物 —— 实测：archive-13 的绑定 PASS、ShengUfs 组件
+# 也 PASS，但 kernel.macho 里连一个 NativeUfs 符号都没有（run 43448091244）。
+"ipados-17.7.11-21H461" = "enuma_ufs_defconfig"
