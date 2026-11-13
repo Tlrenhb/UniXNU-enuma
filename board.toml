@@ -30,7 +30,7 @@ lba_bytes = 4096                     # 实测 blockdev --getss
 # （storage ABI 审计 + original-bindings）接进格式 2 的链条，否则 component:ShengUfs 会把
 # 十一个基类符号的链接问题原样带进来（格式 1 里就是这么卡住的）。
 # 阶段 2 重新打开时改回 enuma_ufs_defconfig 即可。
-defconfig = "enuma_defconfig"
+defconfig = "enuma_ufs_defconfig"
 # 顺序即应用顺序：arch → soc → os → device。
 config_fragments = ["arch:configs/common.config", "soc:configs/sm8250.config", "os:configs/ipados.config"]
 # 顺序不是照抄上游：设备系列必须排在 os 之前。os 的 zzz-boot-progress.patch 会在 bsd_init() 里给
