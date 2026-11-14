@@ -1,15 +1,18 @@
 # Device-level patch series.
 #
-# # 2026-11-14: 这一条不再列在这里。FFT-infra/UniXNU（我们现在构建用的框架分支）自己就在
-# patches/xnu/sheng-platform-power.patch 带着同名补丁，而 arch 系列会先应用它；设备仓库在同路径上的
-# 同名文件只是覆盖那一份，若这里再列一次就会第二次 git apply 同一个改动 → "patch does not apply"
-# （run 43555869383，bsd_init.c:688）。文件保留在仓库里，作为覆盖用的版本。: this machine has no Apple PMGR, so AMFI waits for an ApplePMGRNub that
-# will never exist and panics with 'AMFI: No PMGR?' unless the original PMGR provider is invoked at this
-# point in bsd_init(). Upstream keeps it in the SM8550 SoC package; our SM8250 package does not carry it.
-# Without it the bridge that build-platform-power.py compiles is never called and the sheng-pmgr=2 boot
-# argument is a no-op.
+# Empty on purpose since 2026-11-14.
 #
-# It is also the reason the board lists this series *before* the OS profile's series: the ipados-17.7.11
-# series' zzz-boot-progress.patch edits the same bsd_init() region (it wraps the sheng_pmgr_run() call
-# with boot_progress stages) and cannot apply until that block exists.
-sheng-platform-power.patch
+# sheng-platform-power.patch used to be listed here. This machine has no Apple PMGR, so AMFI waits for
+# an ApplePMGRNub that will never exist and panics with "AMFI: No PMGR?" unless the original PMGR
+# provider is invoked at this point in bsd_init(); without the patch the bridge that
+# build-platform-power.py compiles is never called and the sheng-pmgr=2 boot argument is a no-op.
+#
+# The framework this board now builds against (FFT-infra/UniXNU) ships the same patch at the same path
+# and its arch series applies it, so listing it here applied the same change twice and the second
+# git apply failed at bsd_init.c:688 (run 43555869383). The file stays in this repository: a device
+# repository file shadows the framework file at the same path, so keeping it here still controls the
+# exact version that gets applied.
+#
+# The board still lists this series *before* the OS profile's series: the ipados-17.7.11 series'
+# zzz-boot-progress.patch edits the same bsd_init() region (it wraps the sheng_pmgr_run() call with
+# boot_progress stages) and cannot apply until that block exists.
