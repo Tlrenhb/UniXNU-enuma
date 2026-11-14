@@ -1,6 +1,9 @@
 # Device-level patch series.
 #
-# sheng-platform-power.patch: this machine has no Apple PMGR, so AMFI waits for an ApplePMGRNub that
+# # 2026-11-14: 这一条不再列在这里。FFT-infra/UniXNU（我们现在构建用的框架分支）自己就在
+# patches/xnu/sheng-platform-power.patch 带着同名补丁，而 arch 系列会先应用它；设备仓库在同路径上的
+# 同名文件只是覆盖那一份，若这里再列一次就会第二次 git apply 同一个改动 → "patch does not apply"
+# （run 43555869383，bsd_init.c:688）。文件保留在仓库里，作为覆盖用的版本。: this machine has no Apple PMGR, so AMFI waits for an ApplePMGRNub that
 # will never exist and panics with 'AMFI: No PMGR?' unless the original PMGR provider is invoked at this
 # point in bsd_init(). Upstream keeps it in the SM8550 SoC package; our SM8250 package does not carry it.
 # Without it the bridge that build-platform-power.py compiles is never called and the sheng-pmgr=2 boot
