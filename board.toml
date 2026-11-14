@@ -111,7 +111,10 @@ dtb = "build/enuma/enuma.dtb"
 [components]
 # SoftwareAES 必须在 include 里：enuma_defconfig 打开 CONFIG_XNU_NATIVE_AES，而 [kernel] archives 引用
 # `component:SoftwareAES` —— 不在 include 时 kernel 步骤直接报 "component SoftwareAES is not selected"。
-include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "ShengUfs", "VirtioMmioBlock", "RamBlock", "XnuPrelink", "DarwinBoot"]
+# QcomXnuUsbDebug（2026-11-14 纳入）：fork 的 release 检查会解析组件目录里 os_abi 匹配的驱动，
+# 缺它时直接报 "component source unavailable: QcomXnuUsbDebug; run unixnu fetch"。而且它正是我们
+# 一直缺的东西 —— CDC-ACM 串口控制台（DWC3/SM8250），有了它就不必再用"复位延时编码"读内核了。
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "ShengUfs", "VirtioMmioBlock", "RamBlock", "QcomXnuUsbDebug", "XnuPrelink", "DarwinBoot"]
 
 [payload]
 volume = "ENUMAESP"
