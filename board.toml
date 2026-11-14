@@ -57,6 +57,8 @@ archives = [
   # 地址取 scripts/data/native-storage-original-bindings.S（静态推导）；这份文件对 enuma 有效，因为它是
   # 同一 OS profile（ipados-17.7.11-21H461）的 original link 地址，与本板额外组件无关 —— 已用本仓库 CI
   # 独立推导的 vtable 0xfffffff005cb44c0 / getter 0xfffffff00496edc4 / meta 0xfffffff006add1d0 三个值逐一对上。
+  "component:QcomXnuUsbDebug",
+  # QcomXnuUsbDebug 在 include 里时，驱动要求 archives 也有对应条目（2026-11-14 run 43556917530）。
   "component:ShengUfs",
   # --subset: 录制文件带的 __ZN7IOMedia9metaClassE 这一版 ShengUfs 并不引用（第一次构建时
   # build-storage-bindings.py 直接以此报错退出，2026-11-13 run 43443228954 的 archive-13 日志）。

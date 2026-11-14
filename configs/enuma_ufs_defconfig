@@ -46,7 +46,9 @@ CONFIG_XNU_NATIVE_PAN=y
 CONFIG_XNU_SHENG_PMGR=y
 
 CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
-CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/link-stubs/libLinkStubs.a"
+# 链接行里必须同时有 link-stubs（offline-legacy 钩子）和 mockfs fixture（vfs_conf.o 以 -DMOCKFS=1 编译
+# 后引用的三个符号）。两者都是普通归档，直接列路径即可。
+CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/link-stubs/libLinkStubs.a {tree}/build/mockfs-fixture/libmockfs_fixture.a"
 CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
 CONFIG_XNU_ARMVIRT_PLATFORM=n
 
