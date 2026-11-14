@@ -125,6 +125,22 @@ jobs:
       # The kernel is built twice on purpose: build-platform-power.py compiles the original-PMGR bridge
       # against a kernel that already exists, so a single pass links a no-op sheng_pmgr_run and says so.
       # A no-op bridge panics on hardware with 'AMFI: No PMGR?'. The second pass is incremental.
+      # The storage chain only force-loads an archive when the matching XNU_* variable reaches
+      # build-xnu-4k-baseline.sh, and a failure looks the same whether the variable is missing or the
+      # archive is wrong. Print what the driver resolved, before the first kernel pass.
+      - name: Show the resolved kernel configuration
+        if: inputs.full
+        working-directory: unixnu
+        run: |
+          set -euo pipefail
+          ls -la out/*/*/*/.config 2>/dev/null || true
+          for f in out/*/*/*/.config; do
+            [ -f "$f" ] || continue
+            echo "--- $f"
+            grep -E 'MOCKFS|EXTRA_LD_ARCHIVES|NATIVE_UFS|BUILD_ARCHIVES|SHENG_PMGR|QCOM_USB' "$f" || echo '(no matching keys)'
+          done
+          python3 -c "import json,glob; [print('status:', p, json.load(open(p)).get('config_path')) for p in glob.glob('out/*/*/*/status.json')]"
+
       - name: Kernel pass 1 (compile records, first kernel)
         if: inputs.full
         working-directory: unixnu
