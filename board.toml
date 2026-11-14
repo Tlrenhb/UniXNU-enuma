@@ -32,7 +32,9 @@ lba_bytes = 4096                     # 实测 blockdev --getss
 # 阶段 2 重新打开时改回 enuma_ufs_defconfig 即可。
 defconfig = "enuma_ufs_defconfig"
 # 顺序即应用顺序：arch → soc → os → device。
-config_fragments = ["arch:configs/common.config", "soc:configs/sm8250.config", "os:configs/ipados.config"]
+# 设备片段排最后：profile 的片段会打开 mockfs fixture 并写自己的链接输入，defconfig 里的值压不住它们，
+# 只有排在最后的设备片段能覆盖（2026-11-14 由 UFS 链接失败定位到这一点）。
+config_fragments = ["arch:configs/common.config", "soc:configs/sm8250.config", "os:configs/ipados.config", "device:configs/enuma_device.config"]
 # 顺序不是照抄上游：设备系列必须排在 os 之前。os 的 zzz-boot-progress.patch 会在 bsd_init() 里给
 # sheng_pmgr_run() 调用点加插桩，而那个调用点由设备系列的 sheng-platform-power.patch 引入；
 # 先设备后 os，两条都能干净应用（本地已逐条 git apply --check 验证）。
