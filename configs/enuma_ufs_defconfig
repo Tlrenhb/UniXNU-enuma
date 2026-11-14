@@ -20,14 +20,7 @@
 #
 # 与阶段 1 的差异（增量）：
 #   + CONFIG_XNU_NATIVE_UFS=y                 ← ShengUfs 组件 + original bindings（2026-11-13 接上）
-#   + CONFIG_XNU_SOURCE_MOCKFS=y              ← 见下
 #
-# 阶段 2 必须同时打开 mockfs：arch:configs/common.config 让 vfs_conf.o 以 -DMOCKFS=1 编译，于是它引用
-# _mockfs_mountroot / _mockfs_vfsops / _mockfs_vnodeop_opv_desc；而 fixture 归档只有在 MOCKFS_MODE=1
-# （即本行为 y）时才由 build-xnu-4k-baseline.sh 自己 -force_load（scripts/build-xnu-4k-baseline.sh:776）。
-# 2026-11-13 实测：不开这一行时第一遍内核链接就以这三个符号未定义失败（run 43451637184），
-# 而往 EXTRA_LD_ARCHIVES 里塞多路径不会被采纳（link line 里根本看不到那些归档）。
-CONFIG_XNU_SOURCE_MOCKFS=y
 #   + CONFIG_XNU_SMMU4K_PROBE=y               ← 只探测，不接管；umi 全程保持 =n，我们先用探针取证
 # board.toml 的 `[kernel] archives` 现在按组件目录取 ShengUfs（`component:ShengUfs`）并紧跟一条
 # `build-storage-bindings.py --component NativeUfs`，两者都是 2026-11-13 接上的；构建时用
@@ -46,9 +39,7 @@ CONFIG_XNU_NATIVE_PAN=y
 CONFIG_XNU_SHENG_PMGR=y
 
 CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
-# 链接行里必须同时有 link-stubs（offline-legacy 钩子）和 mockfs fixture（vfs_conf.o 以 -DMOCKFS=1 编译
-# 后引用的三个符号）。两者都是普通归档，直接列路径即可。
-CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/link-stubs/libLinkStubs.a {tree}/build/mockfs-fixture/libmockfs_fixture.a"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/link-stubs/libLinkStubs.a"
 CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
 CONFIG_XNU_ARMVIRT_PLATFORM=n
 
