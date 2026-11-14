@@ -28,7 +28,7 @@ on:
         # contain ("upload-pack: not our ref"), so unixnu fetch dies initialising submodules. This is the
         # newest revision whose ArmCpu pointer resolves, checked against the API for every commit up to
         # HEAD. Bump again when upstream fixes the pointer.
-        default: "7d85ede80092050f4d87f72ac7229bb605ce07fb"
+        default: "e0ee2ad9a2654309480c8b0cc725d0dc09186cd4"
 
 permissions:
   contents: read
@@ -45,8 +45,13 @@ jobs:
       - name: Check out UniXNU
         uses: actions/checkout@v4
         with:
-          repository: UniXNU/UniXNU
-          ref: ${{ inputs.kernel_sha || 'a885256c53a234d1e9c3cadeaf44299a1ef75fe8' }}
+          # FFT-infra's fork rather than upstream: upstream main has neither
+          # scripts/build-storage-bindings.py nor scripts/data/native-storage-original-bindings.S
+          # (both 404 there), and without them a source block driver cannot be linked at all --
+          # IOKit is prelinked and exports none of the eleven IOStorageFamily base symbols. The fork
+          # is what alioth (SM8250-AC, same SoC) uses to reach launchd with a UFS root.
+          repository: FFT-infra/UniXNU
+          ref: ${{ inputs.kernel_sha || 'e0ee2ad9a2654309480c8b0cc725d0dc09186cd4' }}
           path: unixnu
           persist-credentials: false
 
