@@ -28,10 +28,9 @@
 #define UFS_PHY_BASE                  0x01d87000ULL
 #define UFS_PHY_SIZE                  0x0e00ULL
 
-// ufs_phy_gdsc lives in the "gcc_ufs_phy" register block at 0x177004 on kona, i.e. NOT inside the
-// 0x77000 page that holds the branch registers (on SM8550 it was 0x77004 and did fit). The driver
-// maps this page separately, so the offsets are split out explicitly.
-#define GCC_UFS_PHY_GDSCR_WINDOW      0x177000ULL
+// ufs_phy_gdsc is at physical address 0x177004 on kona. GCC_BASE is 0x100000, so
+// the containing page is the GCC-relative offset 0x77000, shared with the branch registers.
+#define GCC_UFS_PHY_GDSCR_WINDOW      0x77000ULL
 #define GCC_UFS_PHY_GDSCR_OFFSET      0x004U
 #define GCC_UFS_PHY_GDSCR             (GCC_UFS_PHY_GDSCR_WINDOW + GCC_UFS_PHY_GDSCR_OFFSET)
 

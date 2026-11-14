@@ -39,6 +39,8 @@ parser.add_argument('--directory', type=Path, default=ROOT / 'build/sheng-ufs')
 # strict: for the component the file was derived from, an unused entry means the file is stale.
 parser.add_argument('--subset', action='store_true',
                     help='bind only the symbols this object imports; unused recorded entries are allowed')
+parser.add_argument('--weak', action='store_true',
+                    help='emit weak absolute definitions when another transport already owns the same bindings')
 args = parser.parse_args()
 
 out = args.directory.resolve()
@@ -73,21 +75,20 @@ data, image, symbols = object_symbols(obj_path)
 imports = undefined_of(symbols)
 
 
-def assemble(source: Path, weak=False):
-    # Weak mode is written as `.weak` in the source itself, so nothing else in the object changes.
+def assemble(source: Path):
     subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Werror',
                     '-Wno-incompatible-sysroot', '-c', source, '-o', out / 'original-bindings.o'],
                    check=True)
 
 
 def binding_source(bindings, weak=False):
-    # Mach-O spells a weak definition .weak_definition; there is no .weak directive.
-    directive = '.weak_definition' if weak else '.globl'
-    return ''.join(f'{directive} {name}\n.set {name}, {value:#x}\n' for name, value in sorted(bindings.items()))
+    # Mach-O needs both directives for a weak symbol to remain externally visible.
+    return ''.join(f'.globl {name}\n' + (f'.weak_definition {name}\n' if weak else '') +
+                   f'.set {name}, {value:#x}\n' for name, value in sorted(bindings.items()))
 
 
 def archive_with(bindings, provenance, weak=False):
-    assemble(out / 'original-bindings.S', weak)
+    assemble(out / 'original-bindings.S')
     # The component recipe already archived its own object; this adds the bindings object
     # to that same archive, which is the file the kernel link force-loads.
     subprocess.run(['xcrun', 'ar', 'rcs', archive, obj_path, out / 'original-bindings.o'], check=True)
@@ -115,8 +116,8 @@ if audit_path.is_file():
     missing = set(imports) - set(bindings)
     if missing:
         raise SystemExit('The storage audit does not cover: ' + ', '.join(sorted(missing)))
-    (out / 'original-bindings.S').write_text(binding_source(bindings, weak=args.subset))
-    archive_with(bindings, 'build/storage-abi/interface-audit.json')
+    (out / 'original-bindings.S').write_text(binding_source(bindings, weak=args.weak))
+    archive_with(bindings, 'build/storage-abi/interface-audit.json', weak=args.weak)
 else:
     if not recorded.is_file():
         raise SystemExit('Neither the storage audit nor the recorded bindings are present')
@@ -131,10 +132,9 @@ else:
     extra = set(recorded_values) - set(imports)
     if extra and not args.subset:
         raise SystemExit('The recorded bindings carry unused symbols: ' + ', '.join(sorted(extra)))
-    # A subset import is the second driver to bind the same original addresses (VirtioMmioBlock
-    # next to ShengUfs), so its definitions are weak: when both archives are force-loaded, the
-    # first one supplies the symbol and the other agrees with it instead of colliding.
+    # A subset controls which recorded symbols are emitted. Keep binding strength explicit: UFS
+    # needs strong definitions; a second transport may request weak aliases with --weak.
     bindings = {name: recorded_values[name] for name in imports} if args.subset else dict(recorded_values)
-    (out / 'original-bindings.S').write_text(binding_source(bindings, weak=args.subset))
-    archive_with(bindings, 'scripts/data/native-storage-original-bindings.S')
+    (out / 'original-bindings.S').write_text(binding_source(bindings, weak=args.weak))
+    archive_with(bindings, 'scripts/data/native-storage-original-bindings.S', weak=args.weak)
 

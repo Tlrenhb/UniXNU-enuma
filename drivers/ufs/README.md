@@ -5,9 +5,9 @@
 
 | 文件 | 改动 | 原因 |
 |---|---|---|
-| `GccUfs.h` | 整个文件重写 | SM8550 → SM8250：分支门偏移来自 `gcc-kona.c`，UFS/ICE/PHY 窗口与 IRQ 来自 `kona.dtsi:3069` 与合并后的 enuma DT；`ufs_phy_gdsc` 在 kona 是 `0x177004`，不在 `0x77000` 分支页里 |
-| `NativeUfs.cpp` | 匹配串加入 `qcom,ufshc` | kona DT 声明的 compatible 就是 `qcom,ufshc`（`kona.dtsi:3070`），不改就只能匹配 sheng 的名字 |
-| `NativeUfs.cpp` | GDSC 改用 `GCC_UFS_PHY_GDSCR_WINDOW/_OFFSET` 单独映射 | 同上：kona 的 GDSC 不在分支页内，原来的 `- 0x77000` 会读到窗口外 |
+| `GccUfs.h` | 整个文件重写 | SM8550 → SM8250：UFS/ICE/PHY 窗口来自 `kona.dtsi`；GCC 基址为 `0x100000`，`ufs_phy_gdsc` 的物理地址 `0x177004` 对应 GCC 偏移 `0x77004`，与分支寄存器在同一页。 |
+| `NativeUfs.cpp` | 匹配串加入 `qcom,ufshc` | kona DT 声明的 compatible 就是 `qcom,ufshc`（`kona.dtsi:3070`），不改就只能匹配 sheng 的名字。 |
+| `NativeUfs.cpp` | 用 `GCC_UFS_PHY_GDSCR_WINDOW/_OFFSET` 读取 GDSC | 格式 2 使用本地驱动；以设备树中的物理地址核对探针计算。 |
 | `NativeUfs.cpp` | `read()` 里的计时用 `NATIVE_VERIFIED_BLOCK` 包起来 | 上游把 `timerTicks`/`native_ufs_read_ticks` 声明在 verified-block 块里，却无条件使用；sheng 始终打开该宏所以看不出来，我们第一版不打开就编译失败 |
 
 构建方式：`scripts/build-arm-driver.py NativeUfs` → `build/sheng-ufs/libShengUfs.a`

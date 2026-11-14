@@ -172,7 +172,7 @@ static uintptr_t mapPhys (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMa
 void NativeUfs::inspect (void)
 {
   OSSharedPtr<IOMemoryMap> gccMap, memPhyMap, hcMap;
-  // kona: branch gates live in the 0x77000 page, ufs_phy_gdsc at 0x177004 in its own page.
+  // kona: branch gates and ufs_phy_gdsc at physical 0x177004 share a GCC page.
   uintptr_t gcc = mapPhys (GCC_BASE + GCC_BRANCH_WINDOW, 0x1000, gccMap);
   uintptr_t memPhy = mapPhys (GCC_BASE + GCC_UFS_PHY_GDSCR_WINDOW, 0x1000, memPhyMap);
   if (!gcc || !memPhy) {

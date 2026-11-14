@@ -15,6 +15,13 @@
 #
 # What stays here: RAM and reserved regions, which CPUs are enabled, the peripheral wiring (UFS,
 # GCC, SMMU, PMIC, TLMM, display) and every board policy decision.
+# Select the device's SM8250-adapted NativeUfs source. The catalog's ShengUfs source matches
+# qcom,sm8550-ufshc; enuma's device tree reports qcom,ufshc. Probe mode 2 is read-only.
+[[source]]
+name = "ShengUfs"
+kind = "driver"
+local = "drivers/ufs"
+
 [[source]]
 name = "sm8250"
 kind = "soc"

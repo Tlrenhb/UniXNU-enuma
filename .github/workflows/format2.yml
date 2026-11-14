@@ -94,6 +94,10 @@ jobs:
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
 
+      - name: Install OpenSSL for VerifiedRoot host checks
+        if: inputs.full
+        run: brew install openssl@3
+
       - name: Select the device (schema 2 board, feeds and profiles)
         working-directory: unixnu
         run: ./unixnu defconfig "${{ inputs.defconfig }}"
@@ -101,6 +105,11 @@ jobs:
       - name: Fetch the SoC package, the OS profile sources and the modules
         working-directory: unixnu
         run: ./unixnu fetch
+
+      - name: Fetch the pinned OS and SystemOS image members
+        if: inputs.full
+        working-directory: unixnu
+        run: ./unixnu ipsw fetch OS 'Cryptex1,SystemOS'
 
       - name: Show where every module comes from
         working-directory: unixnu
@@ -272,4 +281,5 @@ jobs:
             unixnu/out/enuma/*/*/payload/payload.img
             unixnu/out/enuma/*/*/tree/build/storage-abi/interface-audit.json
             unixnu/out/enuma/*/*/tree/build/sheng-ufs/bindings.json
+            unixnu/out/enuma/*/*/tree/build/verified-root-os-xnu-bundle/inputs.json
           if-no-files-found: warn
