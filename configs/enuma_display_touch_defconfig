@@ -41,7 +41,7 @@ CONFIG_XNU_NATIVE_PAN=y
 CONFIG_XNU_SHENG_PMGR=y
 
 CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
-CONFIG_XNU_EXTRA_LD_ARCHIVES="{tree}/build/link-stubs/libLinkStubs.a"
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/link-stubs/libLinkStubs.a"
 CONFIG_XNU_ARMVIRT_PLATFORM=n
 
 CONFIG_XNU_NATIVE_UFS=y

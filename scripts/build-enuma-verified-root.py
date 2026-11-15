@@ -49,6 +49,10 @@ for component in ('os', 'systemos'):
     if not record['real_c_signature_and_block_verification'] or record['original_image_modified'] is not False:
         raise SystemExit(f'{component}: real full-image verification did not pass')
 
+# The framework's bsd_init.o compile record includes EXPORT_HDRS/libsa, which is absent
+# in some clean format-2 trees. The probe builder reuses that command with -Werror, so
+# materialize the intentionally empty include directory before compiling the probe sources.
+(ROOT / 'build/xnu/ios-obj/EXPORT_HDRS/libsa').mkdir(parents=True, exist_ok=True)
 subprocess.run([sys.executable, ROOT / 'scripts/build-verified-root-probe.py', '--component', 'os',
                 '--include-systemos'], check=True)
 print('PASS: pinned original OS and SystemOS fully verified; UFS policy archive built')
