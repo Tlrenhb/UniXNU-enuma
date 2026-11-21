@@ -250,18 +250,15 @@ static bool enumaWarmFastbootReset (void)
   if (!upd8 (o, c, 0x8F, 0xFE, 2 << 1)) {
     return false;
   }
-  // PS_HOLD reset type = warm
-  int en = rd8 (o, 0x5B);
-  if (en < 0) {
-    return false;
-  }
-  if ((en & 0x80) && !upd8 (o, c, 0x5B, 0x80, 0)) {
+  // PS_HOLD reset type = warm, and force the reset enable on so deasserting
+  // PS_HOLD actually restarts (it may be left disabled by the bootloader).
+  if (!upd8 (o, c, 0x5B, 0x80, 0)) {
     return false;
   }
   if (!upd8 (o, c, 0x5A, 0x0F, 0x01)) {
     return false;
   }
-  if ((en & 0x80) && !upd8 (o, c, 0x5B, 0x80, 0x80)) {
+  if (!upd8 (o, c, 0x5B, 0x80, 0x80)) {
     return false;
   }
   imem[0] = 0x77665500U;
