@@ -178,12 +178,16 @@ static uintptr_t mapPhys (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMa
 // RamoopsLogLib uses. Returns false if any mapping/SPMI step fails (caller falls back).
 static bool enumaWarmFastbootReset (void)
 {
-  volatile uint32_t *core = (volatile uint32_t *) ml_io_map (0x0C440000ULL, 0x2000ULL);
-  volatile uint32_t *cnfg = (volatile uint32_t *) ml_io_map (0x0C40A000ULL, 0x1000ULL);
-  volatile uint8_t  *obs  = (volatile uint8_t  *) ml_io_map (0x0E600000ULL, 0x20000ULL);
-  volatile uint8_t  *chn  = (volatile uint8_t  *) ml_io_map (0x0C600000ULL, 0x2000000ULL);
-  volatile uint32_t *pshold = (volatile uint32_t *) ml_io_map (0x0C264000ULL, 0x1000ULL);
-  volatile uint32_t *imem = (volatile uint32_t *) ml_io_map (0x146BF65CULL, 0x1000ULL);
+  // Use the same device-memory mapping that successfully reads the UFS/GCC
+  // registers (mapPhys). ml_io_map's default attributes do not behave as device
+  // memory for the SPMI arbiter, so the PON sequence silently failed before.
+  OSSharedPtr<IOMemoryMap> kCore, kCnfg, kObs, kChn, kPs, kImem;
+  volatile uint32_t *core = (volatile uint32_t *) mapPhys (0x0C440000ULL, 0x2000ULL, kCore);
+  volatile uint32_t *cnfg = (volatile uint32_t *) mapPhys (0x0C40A000ULL, 0x1000ULL, kCnfg);
+  volatile uint8_t  *obs  = (volatile uint8_t  *) mapPhys (0x0E600000ULL, 0x20000ULL, kObs);
+  volatile uint8_t  *chn  = (volatile uint8_t  *) mapPhys (0x0C600000ULL, 0x2000000ULL, kChn);
+  volatile uint32_t *pshold = (volatile uint32_t *) mapPhys (0x0C264000ULL, 0x1000ULL, kPs);
+  volatile uint32_t *imem = (volatile uint32_t *) mapPhys (0x146BF65CULL, 0x1000ULL, kImem);
   if (!core || !cnfg || !obs || !chn || !pshold || !imem) {
     return false;
   }
