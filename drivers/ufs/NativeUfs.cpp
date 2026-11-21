@@ -39,6 +39,8 @@ static bool gRootDiagnosticEnabled;
 static void rootDiagnosticFailure (const char *reason);
 
 extern "C" {
+// Physical mapping helper used by the unattended log carrier (verified writable on enuma).
+void *ml_io_map (uint64_t phys, uint64_t size);
 // Optional passive observer; absent in ordinary builds. It may run while a
 // window lock is held, so its contract forbids blocking or transport access.
 void boot_progress_poll (void) __attribute__((weak));
@@ -205,13 +207,41 @@ void NativeUfs::inspect (void)
       readHc = 1;
     }
   }
-  panic ("NATIVE_UFS inspect\n"
-         "gdsc=%08x memphygdsc=%08x\n"
-         "axi=%08x ahb=%08x unipro=%08x\n"
-         "txsym=%08x rxsym=%08x aux=%08x\n"
-         "hc_read=%u cap=%08x ver=%08x\n"
-         "is=%08x hcs=%08x hce=%08x utrlba=%08x",
-         gdsc, memGdsc, axi, ahb, unipro, txs, rxs, aux, readHc, cap, ver, is, hcs, hce, utrlba);
+  char text[512];
+  snprintf (text, sizeof (text),
+            "NATIVE_UFS inspect\n"
+            "gdsc=%08x memphygdsc=%08x\n"
+            "axi=%08x ahb=%08x unipro=%08x\n"
+            "txsym=%08x rxsym=%08x aux=%08x\n"
+            "hc_read=%u cap=%08x ver=%08x\n"
+            "is=%08x hcs=%08x hce=%08x utrlba=%08x",
+            gdsc, memGdsc, axi, ahb, unipro, txs, rxs, aux, readHc, cap, ver, is, hcs, hce, utrlba);
+  // Unattended capture: hand the text to the firmware log ferry (carrier at PA
+  // 0xB0400000) and warm-reset straight back to fastboot. No screen photo and no
+  // button press are needed; the host reads \enuma.txt from logfs afterwards.
+  volatile uint32_t *carrier = (volatile uint32_t *) ml_io_map (0xB0400000ULL, 0x4000ULL);
+  if (carrier) {
+    unsigned len = 0;
+    while (len < sizeof (text) - 1 && text[len]) {
+      len++;
+    }
+    carrier[0] = 0x474F4C45U; // 'ELOG'
+    carrier[1] = len;
+    volatile uint8_t *data = (volatile uint8_t *) (carrier + 2);
+    for (unsigned i = 0; i < len; i++) {
+      data[i] = (uint8_t) text[i];
+    }
+    __asm__ volatile ("dsb sy" ::: "memory");
+    register uint64_t x0 __asm__ ("x0") = 0x84000009ULL; // PSCI SYSTEM_RESET
+    register uint64_t x1 __asm__ ("x1") = 0;
+    register uint64_t x2 __asm__ ("x2") = 0;
+    register uint64_t x3 __asm__ ("x3") = 0;
+    __asm__ volatile ("smc #0" : "+r" (x0) : "r" (x1), "r" (x2), "r" (x3) : "memory");
+    for (;;) {
+      __asm__ volatile ("wfe");
+    }
+  }
+  panic ("%s", text);
 }
 
 // Adopt the controller the firmware left running (native-ufs-probe=3) and issue
