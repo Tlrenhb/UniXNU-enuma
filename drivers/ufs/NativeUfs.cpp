@@ -171,6 +171,8 @@ static uintptr_t mapPhys (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMa
   return keep ? static_cast<uintptr_t> (keep->getVirtualAddress ()) : 0;
 }
 
+static bool enumaWriteReportToLogfs (const char *text);
+
 // Warm reset back to fastboot, preserving DRAM so the log carrier survives.
 // PSCI SYSTEM_RESET is a HARD reset on this board (pstore/ramoops come back empty),
 // which wipes the carrier. Instead program the PM8150 PON for a warm bootloader
@@ -315,6 +317,10 @@ void NativeUfs::inspect (void)
             "hc_read=%u cap=%08x ver=%08x\n"
             "is=%08x hcs=%08x hce=%08x utrlba=%08x",
             gdsc, memGdsc, axi, ahb, unipro, txs, rxs, aux, readHc, cap, ver, is, hcs, hce, utrlba);
+  // Durable capture: write the report into the tail of the logfs partition (raw
+  // blocks, clear of the FAT metadata) so it survives even a hard reset. The host
+  // reads it back from Android without any screen photo.
+  (void) enumaWriteReportToLogfs (text);
   // Unattended capture: hand the text to the firmware log ferry (carrier at PA
   // 0xB0400000) and warm-reset straight back to fastboot. No screen photo and no
   // button press are needed; the host reads \enuma.txt from logfs afterwards.
@@ -1333,6 +1339,76 @@ extern "C" unsigned native_ufs_store_gpt_check (void)
   static uint8_t entries[4096 * 4];
   if (blocks > 4 || hostRead4k (0, gStoreGeometry.entriesLba, blocks, entries) != kIOReturnSuccess) return 4;
   return rootCrc32 (entries, gStoreGeometry.entryCount * 128) == gStoreGeometry.entriesCrc ? 0 : 5;
+}
+
+// Write the UFS report into the last 64 blocks of the logfs partition (raw, away
+// from the FAT metadata at the start). Non-destructive to boot/userdata; logfs is
+// a scratch log partition. Returns true on success. Host reads it back via Android
+// dd at (logfs_start + logfs_blocks - 64).
+static bool enumaWriteReportToLogfs (const char *text)
+{
+  const char *why = "";
+  if (!hostBringUp (&why)) {
+    return false;
+  }
+  static uint8_t hdr[4096];
+  if (hostRead4k (0, 1, 1, hdr) != kIOReturnSuccess) {
+    return false;
+  }
+  auto le64 = [] (const uint8_t *p) -> uint64_t {
+    uint64_t v = 0;
+    for (int i = 7; i >= 0; i--) {
+      v = (v << 8) | p[i];
+    }
+    return v;
+  };
+  uint64_t entriesLba = le64 (hdr + 72);
+  uint32_t count = le32 (hdr + 80);
+  uint32_t esize = le32 (hdr + 84);
+  if (count == 0 || count > 128 || esize < 128 || esize > 4096) {
+    return false;
+  }
+  static uint8_t ent[4096 * 4];
+  uint32_t blocks = (count * esize + 4095) / 4096;
+  if (blocks > 4 || hostRead4k (0, entriesLba, blocks, ent) != kIOReturnSuccess) {
+    return false;
+  }
+  uint64_t logfsLast = 0;
+  bool found = false;
+  for (uint32_t i = 0; i < count; i++) {
+    const uint8_t *e = ent + i * esize;
+    const uint16_t *name = (const uint16_t *) (e + 56);
+    static const uint16_t want[] = { 'l', 'o', 'g', 'f', 's', 0 };
+    bool match = true;
+    for (int k = 0; k < 6; k++) {
+      if (name[k] != want[k]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) {
+      logfsLast = le64 (e + 40);
+      found = true;
+      break;
+    }
+  }
+  if (!found || logfsLast < 128) {
+    return false;
+  }
+  static uint8_t buf[4096];
+  bzero (buf, sizeof (buf));
+  buf[0] = 'U'; buf[1] = 'L'; buf[2] = 'O'; buf[3] = 'G';
+  unsigned len = 0;
+  while (len < 4000 && text[len]) {
+    len++;
+  }
+  buf[4] = (uint8_t) (len & 0xff);
+  buf[5] = (uint8_t) (len >> 8);
+  for (unsigned i = 0; i < len; i++) {
+    buf[8 + i] = (uint8_t) text[i];
+  }
+  uint64_t lba = logfsLast - 63;
+  return hostWrite4k (0, lba, 1, buf, true) == kIOReturnSuccess;
 }
 
 // One read-only window of the root image as a block device: 512-byte sectors on top of 4096-byte
