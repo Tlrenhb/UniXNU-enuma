@@ -171,6 +171,104 @@ static uintptr_t mapPhys (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMa
   return keep ? static_cast<uintptr_t> (keep->getVirtualAddress ()) : 0;
 }
 
+// Warm reset back to fastboot, preserving DRAM so the log carrier survives.
+// PSCI SYSTEM_RESET is a HARD reset on this board (pstore/ramoops come back empty),
+// which wipes the carrier. Instead program the PM8150 PON for a warm bootloader
+// reset over the SPMI observer and deassert PS_HOLD, the same sequence the firmware
+// RamoopsLogLib uses. Returns false if any mapping/SPMI step fails (caller falls back).
+static bool enumaWarmFastbootReset (void)
+{
+  volatile uint32_t *core = (volatile uint32_t *) ml_io_map (0x0C440000ULL, 0x2000ULL);
+  volatile uint32_t *cnfg = (volatile uint32_t *) ml_io_map (0x0C40A000ULL, 0x1000ULL);
+  volatile uint8_t  *obs  = (volatile uint8_t  *) ml_io_map (0x0E600000ULL, 0x20000ULL);
+  volatile uint8_t  *chn  = (volatile uint8_t  *) ml_io_map (0x0C600000ULL, 0x2000000ULL);
+  volatile uint32_t *pshold = (volatile uint32_t *) ml_io_map (0x0C264000ULL, 0x1000ULL);
+  volatile uint32_t *imem = (volatile uint32_t *) ml_io_map (0x146BF65CULL, 0x1000ULL);
+  if (!core || !cnfg || !obs || !chn || !pshold || !imem) {
+    return false;
+  }
+  auto rd8 = [] (volatile uint8_t *o, unsigned addr) -> int {
+    *(volatile uint32_t *) (o + 0x00) = (1U << 27) | (addr << 4);
+    for (unsigned i = 0; i < 100000; i++) {
+      uint32_t st = *(volatile uint32_t *) (o + 0x08);
+      if (st & 1U) {
+        return (st & 0x0EU) ? -1 : (int) *(volatile uint32_t *) (o + 0x18);
+      }
+    }
+    return -1;
+  };
+  auto wr8 = [] (volatile uint8_t *c, unsigned addr, unsigned val) -> bool {
+    *(volatile uint32_t *) (c + 0x10) = val;
+    *(volatile uint32_t *) (c + 0x00) = (0U << 27) | (addr << 4);
+    for (unsigned i = 0; i < 100000; i++) {
+      uint32_t st = *(volatile uint32_t *) (c + 0x08);
+      if (st & 1U) {
+        return !(st & 0x0EU);
+      }
+    }
+    return false;
+  };
+  auto upd8 = [&] (volatile uint8_t *o, volatile uint8_t *c, unsigned addr, unsigned mask, unsigned val) -> bool {
+    int old = rd8 (o, addr);
+    if (old < 0) {
+      return false;
+    }
+    return wr8 (c, addr, ((unsigned) old & ~mask) | (val & mask));
+  };
+  uint32_t version = core[0];
+  if ((version & 0xF0000000U) != 0x50000000U && (version & 0xF0000000U) != 0x70000000U) {
+    return false;
+  }
+  unsigned apids = core[1] & 0x7FF;
+  if (apids == 0 || apids > 512) {
+    return false;
+  }
+  int apid = -1;
+  for (unsigned i = 0; i < apids; i++) {
+    uint32_t map = core[0x900 / 4 + i];
+    if (map == 0 || ((map >> 8) & 0xFFF) != 0x008) {
+      continue;
+    }
+    if (apid < 0 || (cnfg[0x700 / 4 + i] & 7) == 0) {
+      apid = (int) i;
+    }
+  }
+  if (apid < 0 || (cnfg[0x700 / 4 + apid] & 7) != 0) {
+    return false;
+  }
+  volatile uint8_t *o = obs + 0x80 * apid;
+  volatile uint8_t *c = chn + 0x10000 * apid;
+  int type = rd8 (o, 0x04), subtype = rd8 (o, 0x05);
+  if (type != 0x01 || (subtype != 0x04 && subtype != 0x05)) {
+    return false;
+  }
+  // reboot reason = bootloader (2 << 1) in SOFT_RB_SPARE bits 7:1
+  if (!upd8 (o, c, 0x8F, 0xFE, 2 << 1)) {
+    return false;
+  }
+  // PS_HOLD reset type = warm
+  int en = rd8 (o, 0x5B);
+  if (en < 0) {
+    return false;
+  }
+  if ((en & 0x80) && !upd8 (o, c, 0x5B, 0x80, 0)) {
+    return false;
+  }
+  if (!upd8 (o, c, 0x5A, 0x0F, 0x01)) {
+    return false;
+  }
+  if ((en & 0x80) && !upd8 (o, c, 0x5B, 0x80, 0x80)) {
+    return false;
+  }
+  imem[0] = 0x77665500U;
+  __asm__ volatile ("dsb sy" ::: "memory");
+  pshold[0] = 0;
+  for (unsigned i = 0; i < 1000000; i++) {
+    __asm__ volatile ("nop");
+  }
+  return true; // if we are still here the reset did not fire; caller falls back
+}
+
 void NativeUfs::inspect (void)
 {
   OSSharedPtr<IOMemoryMap> gccMap, memPhyMap, hcMap;
@@ -232,7 +330,9 @@ void NativeUfs::inspect (void)
       data[i] = (uint8_t) text[i];
     }
     __asm__ volatile ("dsb sy" ::: "memory");
-    register uint64_t x0 __asm__ ("x0") = 0x84000009ULL; // PSCI SYSTEM_RESET
+    // Warm reset preserves the carrier; if it fires we never return.
+    (void) enumaWarmFastbootReset ();
+    register uint64_t x0 __asm__ ("x0") = 0x84000009ULL; // PSCI SYSTEM_RESET (hard fallback)
     register uint64_t x1 __asm__ ("x1") = 0;
     register uint64_t x2 __asm__ ("x2") = 0;
     register uint64_t x3 __asm__ ("x3") = 0;
