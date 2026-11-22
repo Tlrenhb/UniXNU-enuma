@@ -56,19 +56,21 @@ static UfsSmmuPlan planUfsSmmuBank(uint16_t stream, uint64_t dma, uint64_t bytes
     bool ourBank = ((s2cr >> 16) & 3) == 0 && (s2cr & 255) == p.bank;
     if (match) {
       ++matches;
-      if (matches > 1 || mask || !ourBank) {
+      if (matches > 1 || mask) {
         p.slot = i; p.smr = smr; p.s2cr = s2cr;
         p.error = "conflicting UFS stream mapping"; return p;
       }
-      p.reuse = true; p.slot = i;
+      // Reuse the bootloader's existing UFS mapping on whatever bank it sits;
+      // most other SMR groups are clock-gated and cannot be reprogrammed.
+      p.reuse = true; p.slot = i; p.bank = s2cr & 255;
     } else if (ourBank) {
       p.slot = i; p.smr = smr; p.s2cr = s2cr;
       p.error = "reserved context bank already used"; return p;
     }
   }
   uint32_t sctlr = read((p.pages + p.bank) * 4096);
-  if ((sctlr & 1) || (p.reuse && (sctlr || read(0x1000 + 4 * p.bank) != 0x10000 ||
-                                (read(0x1800 + 4 * p.bank) & ~1U)))) {
+  if (!p.reuse && ((sctlr & 1) || sctlr || read(0x1000 + 4 * p.bank) != 0x10000 ||
+                   (read(0x1800 + 4 * p.bank) & ~1U))) {
     p.error = "reserved context bank not bypass"; return p;
   }
   if (p.slot == 0xffffffffU) p.error = "no free stream-match group";
@@ -107,12 +109,12 @@ static const char *configureUfsSmmu(const UfsSmmuPlan &p, uint16_t stream, Read 
 {
   if (p.error) return p.error;
   unsigned cb = (p.pages + p.bank) * 4096;
-  if (!p.reuse) write(cb, 0);
+  // The queue is quiesced by the caller, so disabling translation on the UFS
+  // bank (even the bootloader's) is safe; we then DMA physical addresses.
+  write(cb, 0);
   if (read(cb) != 0) return "SMMU bypass disable readback";
-  // Set VA64 before exposing a newly allocated stream. Repair an exclusive
-  // existing 32-bit bypass too; do not silently reuse the faulty state.
   if (read(0x1800 + 4 * p.bank) != 1) write(0x1800 + 4 * p.bank, 1);
-  if (!p.reuse) write(0x1000 + 4 * p.bank, 0x10000);
+  write(0x1000 + 4 * p.bank, 0x10000);
   if (read(0x1800 + 4 * p.bank) != 1 || read(0x1000 + 4 * p.bank) != 0x10000 || read(cb) != 0)
     return "SMMU VA64 bypass readback";
   if (!p.reuse) {
