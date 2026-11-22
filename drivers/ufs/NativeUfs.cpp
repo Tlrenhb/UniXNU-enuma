@@ -171,7 +171,7 @@ static uintptr_t mapPhys (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMa
   return keep ? static_cast<uintptr_t> (keep->getVirtualAddress ()) : 0;
 }
 
-static bool enumaWriteReportToLogfs (const char *text);
+static bool enumaWriteReportToLogfs (const char *text, const char **why);
 
 // Warm reset back to fastboot, preserving DRAM so the log carrier survives.
 // PSCI SYSTEM_RESET is a HARD reset on this board (pstore/ramoops come back empty),
@@ -320,7 +320,10 @@ void NativeUfs::inspect (void)
   // Durable capture: write the report into the tail of the logfs partition (raw
   // blocks, clear of the FAT metadata) so it survives even a hard reset. The host
   // reads it back from Android without any screen photo.
-  (void) enumaWriteReportToLogfs (text);
+  const char *writeWhy = "";
+  if (!enumaWriteReportToLogfs (text, &writeWhy)) {
+    panic ("%s\nlogfs_write_fail=%s", text, writeWhy);
+  }
   // Unattended capture: hand the text to the firmware log ferry (carrier at PA
   // 0xB0400000) and warm-reset straight back to fastboot. No screen photo and no
   // button press are needed; the host reads \enuma.txt from logfs afterwards.
@@ -1345,14 +1348,16 @@ extern "C" unsigned native_ufs_store_gpt_check (void)
 // from the FAT metadata at the start). Non-destructive to boot/userdata; logfs is
 // a scratch log partition. Returns true on success. Host reads it back via Android
 // dd at (logfs_start + logfs_blocks - 64).
-static bool enumaWriteReportToLogfs (const char *text)
+static bool enumaWriteReportToLogfs (const char *text, const char **why)
 {
-  const char *why = "";
-  if (!hostBringUp (&why)) {
+  const char *local = "";
+  if (!hostBringUp (&local)) {
+    *why = local;
     return false;
   }
   static uint8_t hdr[4096];
   if (hostRead4k (0, 1, 1, hdr) != kIOReturnSuccess) {
+    *why = "gpt read";
     return false;
   }
   auto le64 = [] (const uint8_t *p) -> uint64_t {
@@ -1366,11 +1371,13 @@ static bool enumaWriteReportToLogfs (const char *text)
   uint32_t count = le32 (hdr + 80);
   uint32_t esize = le32 (hdr + 84);
   if (count == 0 || count > 128 || esize < 128 || esize > 4096) {
+    *why = "gpt header";
     return false;
   }
   static uint8_t ent[4096 * 4];
   uint32_t blocks = (count * esize + 4095) / 4096;
   if (blocks > 4 || hostRead4k (0, entriesLba, blocks, ent) != kIOReturnSuccess) {
+    *why = "gpt entries";
     return false;
   }
   uint64_t logfsLast = 0;
@@ -1393,6 +1400,7 @@ static bool enumaWriteReportToLogfs (const char *text)
     }
   }
   if (!found || logfsLast < 128) {
+    *why = "logfs not found";
     return false;
   }
   static uint8_t buf[4096];
@@ -1408,7 +1416,12 @@ static bool enumaWriteReportToLogfs (const char *text)
     buf[8 + i] = (uint8_t) text[i];
   }
   uint64_t lba = logfsLast - 63;
-  return hostWrite4k (0, lba, 1, buf, true) == kIOReturnSuccess;
+  if (hostWrite4k (0, lba, 1, buf, true) != kIOReturnSuccess) {
+    *why = "write4k";
+    return false;
+  }
+  *why = "ok";
+  return true;
 }
 
 // One read-only window of the root image as a block device: 512-byte sectors on top of 4096-byte
